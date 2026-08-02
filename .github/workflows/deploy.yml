@@ -70,6 +70,20 @@ jobs:
           location: ${{ inputs.gke_location }}
           project_id: ${{ inputs.project_id }}
 
+      # k8s/deployment.yaml ships with YOUR_PROJECT_ID placeholders so the repo
+      # stays project-agnostic. Substitute the real project before applying —
+      # the Workload Identity annotation and GOOGLE_CLOUD_PROJECT must both
+      # carry the actual project ID or the pod cannot reach Vertex AI.
+      - name: Render manifests
+        run: |
+          sed -i "s|YOUR_PROJECT_ID|${{ inputs.project_id }}|g" k8s/deployment.yaml
+          echo "--- rendered manifest ---"
+          cat k8s/deployment.yaml
+          if grep -q "YOUR_PROJECT_ID" k8s/deployment.yaml; then
+            echo "::error::placeholder substitution failed"
+            exit 1
+          fi
+
       - name: Deploy
         run: |
           kubectl apply -n "${{ inputs.namespace }}" -f k8s/deployment.yaml

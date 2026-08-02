@@ -1,19 +1,21 @@
 # Vertex Chat — GKE manifests
 #
+# YOUR_PROJECT_ID is a placeholder so this repo stays project-agnostic. The
+# deploy workflow (.github/workflows/deploy.yml) substitutes it with the real
+# project ID at apply time. If you apply this file by hand, substitute it
+# yourself first — the Workload Identity annotation and GOOGLE_CLOUD_PROJECT
+# below both need the real value or the pod cannot reach Vertex AI.
+#
 # Assumes GKE Workload Identity is enabled on the cluster. The ServiceAccount
-# below is the Kubernetes-side half of the KSA <-> GSA binding described in
-# the architecture doc (section 5.3): it must be linked to the runtime GSA
-# (see main.tf) via:
+# below is the Kubernetes-side half of the KSA <-> GSA binding; the binding
+# itself is created by Terraform (see google_service_account_iam_member
+# .vertex_gemini_workload_identity in main.tf).
 #
-#   gcloud iam service-accounts add-iam-policy-binding \
-#     vertex-gemini-client@YOUR_PROJECT_ID.iam.gserviceaccount.com \
-#     --role roles/iam.workloadIdentityUser \
-#     --member "serviceAccount:YOUR_PROJECT_ID.svc.id.goog[default/vertex-chat-ksa]"
-#
-# Image defaults to the Artifact Registry image built via `gcloud builds
-# submit` (see README). Swap it for artifactory.mylab.lan/vertex-chat:v1 (plus
-# imagePullSecrets, see commented block below) once the private registry path
-# is wired up.
+# The image below is only a default — the deploy workflow overwrites it with
+# the exact image you dispatch. CI publishes to ghcr.io/mevijays/vertex-app
+# (see .github/workflows/docker-publish.yml). Note that GHCR packages are
+# private by default; either make the package public or add an
+# imagePullSecret (commented block below), or pods will hit ImagePullBackOff.
 #
 # Service type is LoadBalancer per request: GKE provisions a regional
 # external L4 TCP load balancer with a public IP, forwarding plain HTTP on
@@ -51,7 +53,7 @@ spec:
       serviceAccountName: vertex-chat-ksa
       containers:
         - name: vertex-chat
-          image: europe-west3-docker.pkg.dev/YOUR_PROJECT_ID/vertex-chat/vertex-chat:v1
+          image: ghcr.io/mevijays/vertex-app:latest
           # imagePullPolicy: IfNotPresent
           ports:
             - name: http
