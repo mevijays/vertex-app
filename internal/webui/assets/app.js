@@ -2,6 +2,22 @@ const STORAGE_KEY = "vertex-chat-state-v1";
 const DEFAULT_SYSTEM = "You are a thoughtful, precise assistant. Use the conversation history for context. Give clear, useful answers and say when you are uncertain.";
 const MAX_CONTEXT_MESSAGES = 40;
 
+// crypto.randomUUID() only exists in secure contexts (HTTPS or localhost) —
+// on plain HTTP it's simply undefined, which used to throw here and silently
+// break every send. These IDs are just local bookkeeping keys, not security
+// tokens, so crypto.getRandomValues (no secure-context restriction) is a
+// perfectly good fallback.
+function generateId() {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+    return crypto.randomUUID();
+  }
+  const bytes = crypto.getRandomValues(new Uint8Array(16));
+  bytes[6] = (bytes[6] & 0x0f) | 0x40;
+  bytes[8] = (bytes[8] & 0x3f) | 0x80;
+  const hex = Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}
+
 const elements = {
   conversation: document.querySelector("#conversation"),
   messages: document.querySelector("#messages"),
@@ -55,7 +71,7 @@ function activeChat() {
 
 function createChat() {
   const now = new Date().toISOString();
-  const chat = { id: crypto.randomUUID(), title: "New conversation", messages: [], createdAt: now, updatedAt: now };
+  const chat = { id: generateId(), title: "New conversation", messages: [], createdAt: now, updatedAt: now };
   state.chats.unshift(chat);
   state.activeId = chat.id;
   saveState();
@@ -217,8 +233,8 @@ async function sendMessage(text) {
   text = text.trim();
   if (!text || activeController) return;
   const chat = activeChat() || createChat();
-  const userMessage = { id: crypto.randomUUID(), role: "user", content: text };
-  const assistantMessage = { id: crypto.randomUUID(), role: "assistant", content: "", streaming: true };
+  const userMessage = { id: generateId(), role: "user", content: text };
+  const assistantMessage = { id: generateId(), role: "assistant", content: "", streaming: true };
   chat.messages.push(userMessage, assistantMessage);
   if (chat.messages.length === 2) chat.title = makeTitle(text);
   chat.updatedAt = new Date().toISOString();
