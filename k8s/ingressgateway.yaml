@@ -1,10 +1,11 @@
 # Istio ingress gateway, fronting vertex-chat through the Managed Anthos
 # Service Mesh already enabled in main.tf (google_gke_hub_feature_membership
-# .mesh, management = MANAGEMENT_AUTOMATIC). This is additive: the existing
-# vertex-chat Service in deployment.yaml is untouched and still gets its own
-# public IP. Once this gateway is verified, consider switching that Service
-# to ClusterIP to avoid paying for two external L4 load balancers — not done
-# here since that would change the app's current public entry point.
+# .mesh, management = MANAGEMENT_AUTOMATIC). This is the platform-owned half
+# of the setup: the Namespace, gateway workload, its Service, and the
+# abstract Gateway resource. The VirtualService/DestinationRule that actually
+# route traffic to vertex-chat live in deployment.yaml instead, next to the
+# app they belong to — this file only defines the shared Gateway they attach
+# to by name (istio-ingress/vertex-chat-gateway).
 #
 # Sized deliberately small: this cluster runs autoscaling 3-5 nodes (see
 # main.tf) with each e2-medium node around 940m allocatable, and GKE system
@@ -108,21 +109,3 @@ spec:
         protocol: HTTP
       hosts:
         - "*"
-
----
-apiVersion: networking.istio.io/v1beta1
-kind: VirtualService
-metadata:
-  name: vertex-chat
-  namespace: istio-ingress
-spec:
-  hosts:
-    - "*"
-  gateways:
-    - vertex-chat-gateway
-  http:
-    - route:
-        - destination:
-            host: vertex-chat.default.svc.cluster.local
-            port:
-              number: 80

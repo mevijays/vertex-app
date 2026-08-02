@@ -17,12 +17,16 @@
 # private by default; either make the package public or add an
 # imagePullSecret (commented block below), or pods will hit ImagePullBackOff.
 #
-# Service type is LoadBalancer per request: GKE provisions a regional
-# external L4 TCP load balancer with a public IP, forwarding plain HTTP on
-# :80 to the pods' :8080. This does not include TLS termination or Cloud
-# Armor — that requires an Ingress + BackendConfig (L7 HTTPS LB) instead, as
-# shown in the proposed architecture diagram. Add that layer before exposing
-# this to real users.
+# Exposure: the Service is ClusterIP, not LoadBalancer — the app is reached
+# through the Istio ingress gateway in k8s/ingressgateway.yaml (Managed
+# Anthos Service Mesh), not its own public IP. The VirtualService below
+# attaches to that gateway (istio-ingress/vertex-chat-gateway) by explicit
+# <namespace>/<name>, since the Gateway resource lives in a different
+# namespace. The DestinationRule sets tls.mode: DISABLE explicitly: these
+# pods have no sidecar (only istio-ingress is labeled for injection), so the
+# gateway must speak plain HTTP to them, not mesh mTLS — Istio's automatic
+# mTLS detection can be flaky right after a fresh apply, so this is spelled
+# out rather than left to be inferred.
 
 apiVersion: v1
 kind: ServiceAccount
@@ -30,7 +34,7 @@ metadata:
   name: vertex-chat-ksa
   namespace: default
   annotations:
-    iam.gke.io/gcp-service-account: vertex-gemini-client@YOUR_PROJECT_ID.iam.gserviceaccount.com
+    iam.gke.io/gcp-service-account: vertex-gemini-client@vertex-lab-201086.iam.gserviceaccount.com
 
 ---
 apiVersion: apps/v1
@@ -86,7 +90,7 @@ spec:
           # cpu". Limits stay high so the app can still burst.
           resources:
             requests:
-              cpu: "100m"
+              cpu: "50m"
               memory: "128Mi"
             limits:
               cpu: "1"
@@ -132,7 +136,7 @@ metadata:
   labels:
     app: vertex-chat
 spec:
-  type: LoadBalancer
+  type: ClusterIP
   selector:
     app: vertex-chat
   ports:
@@ -140,3 +144,33 @@ spec:
       port: 80
       targetPort: http
       protocol: TCP
+
+---
+apiVersion: networking.istio.io/v1beta1
+kind: DestinationRule
+metadata:
+  name: vertex-chat
+  namespace: default
+spec:
+  host: vertex-chat.default.svc.cluster.local
+  trafficPolicy:
+    tls:
+      mode: DISABLE
+
+---
+apiVersion: networking.istio.io/v1beta1
+kind: VirtualService
+metadata:
+  name: vertex-chat
+  namespace: default
+spec:
+  hosts:
+    - "*"
+  gateways:
+    - istio-ingress/vertex-chat-gateway
+  http:
+    - route:
+        - destination:
+            host: vertex-chat.default.svc.cluster.local
+            port:
+              number: 80
