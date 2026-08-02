@@ -124,9 +124,21 @@ variable "gke_zone" {
 }
 
 variable "gke_node_count" {
-  description = "Initial node count for the cluster's default node pool."
+  description = "Initial node count for the cluster's default node pool. Only used at pool creation — see gke_node_min_count/gke_node_max_count for ongoing autoscaling bounds."
   type        = number
   default     = 3
+}
+
+variable "gke_node_min_count" {
+  description = "Minimum nodes in default-pool once autoscaling is enabled. Matches the pool's original fixed size, so enabling autoscaling never scales below what was already running."
+  type        = number
+  default     = 3
+}
+
+variable "gke_node_max_count" {
+  description = "Maximum nodes in default-pool. Sized for headroom beyond the app alone (e.g. an Istio ingress gateway) without over-provisioning."
+  type        = number
+  default     = 5
 }
 
 variable "gke_deletion_protection" {
@@ -349,6 +361,29 @@ resource "google_container_cluster" "gke" {
   }
 
   depends_on = [google_project_service.required]
+}
+
+# Adopts the cluster's default-pool as an explicitly managed resource so it
+# can carry autoscaling — google_container_cluster has no argument for that on
+# an implicit default pool. This resource is meant to be imported onto an
+# already-existing pool (see README), never created fresh: setting
+# remove_default_node_pool on the cluster to force a "clean" create/import
+# would delete and recreate all nodes, taking the running deployment down for
+# no operational benefit over an import.
+resource "google_container_node_pool" "default" {
+  project  = var.project_id
+  cluster  = google_container_cluster.gke.name
+  location = var.gke_zone
+  name     = "default-pool"
+
+  autoscaling {
+    min_node_count = var.gke_node_min_count
+    max_node_count = var.gke_node_max_count
+  }
+
+  lifecycle {
+    ignore_changes = [node_config, initial_node_count]
+  }
 }
 
 # gcloud container fleet memberships register ${cluster}-membership \
