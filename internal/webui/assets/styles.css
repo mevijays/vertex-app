@@ -199,12 +199,55 @@ h1 em { color: #75808d; font-family: Georgia, serif; font-weight: 400; }
 .message-meta { margin: 1px 0 7px; color: var(--muted); font: 500 10px "DM Mono", monospace; letter-spacing: .06em; text-transform: uppercase; }
 .message-content { position: relative; font-size: 15px; line-height: 1.76; }
 .message-content p { margin: 0 0 12px; white-space: pre-wrap; }
+.message-content p:last-child { margin-bottom: 0; }
 .message-content code { padding: 2px 5px; border-radius: 5px; background: var(--line); font: 13px "DM Mono", monospace; }
 .message-content pre { overflow-x: auto; margin: 12px 0; padding: 16px; border-radius: 12px; background: #1d201b; color: #e9eee2; }
 .message-content pre code { padding: 0; background: transparent; }
+.message-content h1, .message-content h2, .message-content h3,
+.message-content h4, .message-content h5, .message-content h6 {
+  margin: 18px 0 8px; line-height: 1.35; font-weight: 600;
+}
+.message-content h1:first-child, .message-content h2:first-child, .message-content h3:first-child,
+.message-content h4:first-child, .message-content h5:first-child, .message-content h6:first-child { margin-top: 0; }
+.message-content h1 { font-size: 22px; }
+.message-content h2 { font-size: 19px; }
+.message-content h3 { font-size: 17px; }
+.message-content h4, .message-content h5, .message-content h6 { font-size: 15px; }
+.message-content ul, .message-content ol { margin: 0 0 12px; padding-left: 22px; }
+.message-content li { margin: 4px 0; }
+.message-content li p { margin: 0; display: inline; white-space: normal; }
+.message-content blockquote {
+  margin: 0 0 12px; padding: 2px 16px; border-left: 3px solid var(--line); color: var(--muted);
+}
+.message-content em { font-style: italic; }
 .message-actions { display: flex; gap: 5px; margin-top: 6px; opacity: 0; }
 .message:hover .message-actions { opacity: 1; }
 .message-action { padding: 4px 8px; border: 1px solid var(--line); border-radius: 7px; background: transparent; color: var(--muted); cursor: pointer; font-size: 10px; }
+
+/* User messages: right-aligned bubble. Assistant messages keep the original
+   full-width, avatar-on-left layout — only .user reverses the grid so the
+   avatar sits after the body instead of before it. */
+.message.user { grid-template-columns: minmax(0,1fr) 36px; }
+.message.user .message-avatar { order: 2; }
+.message.user .message-body {
+  order: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  margin-left: auto;
+  max-width: 82%;
+}
+.message.user .message-meta { text-align: right; }
+.message.user .message-content {
+  padding: 10px 16px;
+  border-radius: 16px 16px 4px 16px;
+  background: var(--line);
+  text-align: left;
+}
+.message.user .message-actions { align-self: flex-end; }
+@media (max-width: 640px) {
+  .message.user .message-body { max-width: 92%; }
+}
 .typing-cursor::after { display: inline-block; width: 7px; height: 16px; margin-left: 2px; background: #7b981d; content: ""; vertical-align: -2px; animation: blink .8s steps(2) infinite; }
 @keyframes blink { 50% { opacity: 0; } }
 

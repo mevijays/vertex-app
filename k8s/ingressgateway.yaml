@@ -142,6 +142,14 @@ spec:
         number: 80
         name: http
         protocol: HTTP
+      tls:
+        # 301s every HTTP request to the same host/path over https:// — the
+        # cert is issued and stable now, so plain HTTP has no reason to stay
+        # served. Raw-IP access (http://34.159.29.36/) still redirects too,
+        # but lands on an HTTPS listener with no matching SNI host for the
+        # IP, so it won't resolve — vertex.mevijay.io is the only real entry
+        # point going forward.
+        httpsRedirect: true
       hosts:
         - "*"
     - port:

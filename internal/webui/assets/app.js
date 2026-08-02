@@ -156,6 +156,7 @@ function messageElement(message) {
   avatar.textContent = message.role === "user" ? "YOU" : "✦";
 
   const body = document.createElement("div");
+  body.className = "message-body";
   const meta = document.createElement("div");
   meta.className = "message-meta";
   meta.textContent = message.role === "user" ? "You" : appConfig.model;
@@ -204,16 +205,94 @@ function renderRichText(container, text) {
       container.append(pre);
       return;
     }
-    section.split(/\n{2,}/).filter(Boolean).forEach((paragraph) => {
-      const p = document.createElement("p");
-      appendInlineText(p, paragraph);
-      container.append(p);
-    });
+    renderBlocks(container, section);
   });
 }
 
+// Block-level markdown: headings, ordered/unordered lists, blockquotes, and
+// paragraphs (everything else falls through to a paragraph). Code fences are
+// already stripped out by renderRichText before this ever sees the text.
+function renderBlocks(container, text) {
+  const lines = text.split("\n");
+  let paragraphLines = [];
+
+  const flushParagraph = () => {
+    if (!paragraphLines.length) return;
+    const p = document.createElement("p");
+    appendInlineText(p, paragraphLines.join(" "));
+    container.append(p);
+    paragraphLines = [];
+  };
+
+  let i = 0;
+  while (i < lines.length) {
+    const line = lines[i];
+
+    if (!line.trim()) {
+      flushParagraph();
+      i++;
+      continue;
+    }
+
+    const heading = line.match(/^(#{1,6})\s+(.*)$/);
+    if (heading) {
+      flushParagraph();
+      const h = document.createElement(`h${heading[1].length}`);
+      appendInlineText(h, heading[2]);
+      container.append(h);
+      i++;
+      continue;
+    }
+
+    if (/^>\s?/.test(line)) {
+      flushParagraph();
+      const quoteLines = [];
+      while (i < lines.length && /^>\s?/.test(lines[i])) {
+        quoteLines.push(lines[i].replace(/^>\s?/, ""));
+        i++;
+      }
+      const blockquote = document.createElement("blockquote");
+      appendInlineText(blockquote, quoteLines.join(" "));
+      container.append(blockquote);
+      continue;
+    }
+
+    if (/^[-*]\s+/.test(line)) {
+      flushParagraph();
+      const ul = document.createElement("ul");
+      while (i < lines.length && /^[-*]\s+/.test(lines[i])) {
+        const li = document.createElement("li");
+        appendInlineText(li, lines[i].replace(/^[-*]\s+/, ""));
+        ul.append(li);
+        i++;
+      }
+      container.append(ul);
+      continue;
+    }
+
+    if (/^\d+\.\s+/.test(line)) {
+      flushParagraph();
+      const ol = document.createElement("ol");
+      while (i < lines.length && /^\d+\.\s+/.test(lines[i])) {
+        const li = document.createElement("li");
+        appendInlineText(li, lines[i].replace(/^\d+\.\s+/, ""));
+        ol.append(li);
+        i++;
+      }
+      container.append(ol);
+      continue;
+    }
+
+    paragraphLines.push(line);
+    i++;
+  }
+  flushParagraph();
+}
+
 function appendInlineText(parent, text) {
-  const pieces = text.split(/(`[^`]+`|\*\*[^*]+\*\*)/g);
+  // Longer/more specific patterns first so e.g. **bold** isn't split into
+  // two stray *italic* matches by the shorter single-star alternative.
+  const pieces = text.split(/(`[^`]+`|\*\*[^*]+\*\*|\*[^*]+\*|__[^_]+__|_[^_]+_)/g);
   for (const piece of pieces) {
     if (piece.startsWith("`") && piece.endsWith("`")) {
       const code = document.createElement("code");
@@ -223,6 +302,18 @@ function appendInlineText(parent, text) {
       const strong = document.createElement("strong");
       strong.textContent = piece.slice(2, -2);
       parent.append(strong);
+    } else if (piece.startsWith("__") && piece.endsWith("__")) {
+      const strong = document.createElement("strong");
+      strong.textContent = piece.slice(2, -2);
+      parent.append(strong);
+    } else if (piece.startsWith("*") && piece.endsWith("*")) {
+      const em = document.createElement("em");
+      em.textContent = piece.slice(1, -1);
+      parent.append(em);
+    } else if (piece.startsWith("_") && piece.endsWith("_")) {
+      const em = document.createElement("em");
+      em.textContent = piece.slice(1, -1);
+      parent.append(em);
     } else {
       parent.append(document.createTextNode(piece));
     }
