@@ -1,0 +1,128 @@
+# Istio ingress gateway, fronting vertex-chat through the Managed Anthos
+# Service Mesh already enabled in main.tf (google_gke_hub_feature_membership
+# .mesh, management = MANAGEMENT_AUTOMATIC). This is additive: the existing
+# vertex-chat Service in deployment.yaml is untouched and still gets its own
+# public IP. Once this gateway is verified, consider switching that Service
+# to ClusterIP to avoid paying for two external L4 load balancers — not done
+# here since that would change the app's current public entry point.
+#
+# Sized deliberately small: this cluster runs autoscaling 3-5 nodes (see
+# main.tf) with each e2-medium node around 940m allocatable, and GKE system
+# pods + the mesh's own components (istio-cni, gke-metadata-server, GMP,
+# kube-dns) already reserve most of a node. A single replica at 50m/64Mi
+# request lets it schedule without forcing a scale-up in the common case;
+# raise both replicas and resources once real traffic needs it.
+
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: istio-ingress
+  labels:
+    # Required for the asm-managed sidecar-injection webhook to select this
+    # namespace (istio-injection: enabled is the OLD Istio convention and is
+    # explicitly excluded by the webhook's namespaceSelector under Managed ASM).
+    istio.io/rev: asm-managed
+
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: istio-ingressgateway
+  namespace: istio-ingress
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: istio-ingressgateway
+  namespace: istio-ingress
+  labels:
+    app: istio-ingressgateway
+    istio: ingressgateway
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: istio-ingressgateway
+      istio: ingressgateway
+  template:
+    metadata:
+      labels:
+        app: istio-ingressgateway
+        istio: ingressgateway
+      annotations:
+        # Selects Istio's "gateway" injection template instead of the default
+        # sidecar template — the whole pod IS the proxy, there's no app
+        # container to sidecar alongside.
+        inject.istio.io/templates: "gateway"
+    spec:
+      serviceAccountName: istio-ingressgateway
+      containers:
+        - name: istio-proxy
+          image: auto # replaced by the injector with the current revision's proxy image
+          resources:
+            requests:
+              cpu: "50m"
+              memory: "64Mi"
+            limits:
+              cpu: "200m"
+              memory: "128Mi"
+          securityContext:
+            runAsNonRoot: true
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: istio-ingressgateway
+  namespace: istio-ingress
+  labels:
+    app: istio-ingressgateway
+    istio: ingressgateway
+spec:
+  type: LoadBalancer
+  selector:
+    app: istio-ingressgateway
+    istio: ingressgateway
+  ports:
+    - name: http
+      port: 80
+      targetPort: 8080
+
+---
+apiVersion: networking.istio.io/v1beta1
+kind: Gateway
+metadata:
+  name: vertex-chat-gateway
+  namespace: istio-ingress
+spec:
+  selector:
+    istio: ingressgateway
+  servers:
+    - port:
+        number: 80
+        name: http
+        protocol: HTTP
+      hosts:
+        - "*"
+
+---
+apiVersion: networking.istio.io/v1beta1
+kind: VirtualService
+metadata:
+  name: vertex-chat
+  namespace: istio-ingress
+spec:
+  hosts:
+    - "*"
+  gateways:
+    - vertex-chat-gateway
+  http:
+    - route:
+        - destination:
+            host: vertex-chat.default.svc.cluster.local
+            port:
+              number: 80
