@@ -16,3 +16,9 @@ gke_cluster_name = "vertex-chat-gke"
 gke_zone         = "us-central1-a"
 # gke_node_count          = 3
 # gke_deletion_protection = true
+
+# GitHub Actions Workload Identity Federation (see main.tf). Must be the exact
+# "owner/repo" of the GitHub repo this code is pushed to — it's the security
+# boundary controlling which repo can assume the GCP deploy identity.
+github_repository = "your-github-org/your-repo-name"
+# deploy_service_account_id = "gke-deployer"

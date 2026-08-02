@@ -174,4 +174,24 @@ internal/webui/assets/  Embedded browser application
 k8s/deployment.yaml     GKE Deployment, ServiceAccount, and Service (LoadBalancer)
 main.tf                 All Terraform: APIs, Artifact Registry, service account,
                         custom role, IAM bindings, GKE cluster, Fleet, and mesh
+.github/workflows/      CI, Docker publish, and deploy pipelines (see below)
 ```
+
+## CI/CD (GitHub Actions)
+
+Three workflows, all under `.github/workflows/`:
+
+| Workflow | Trigger | Does |
+| --- | --- | --- |
+| `ci.yml` | push/PR to `main` | `go test` + coverage, and a build + `govulncheck` scan — both publish results to the job Summary tab |
+| `docker-publish.yml` | manual (`workflow_dispatch`) | Builds and pushes a multi-arch image to `ghcr.io/mevijays/<repo>`; the Summary includes a digest-pinned image reference to hand to the deploy workflow |
+| `deploy.yml` | manual (`workflow_dispatch`) | Authenticates to GCP via Workload Identity Federation (no keys), fetches GKE credentials, and applies `k8s/deployment.yaml` with the image you supply |
+
+`deploy.yml` needs two repository variables (**Settings → Secrets and variables → Actions → Variables**), taken from `terraform output` after applying `main.tf`:
+
+```bash
+terraform output -raw github_actions_workload_identity_provider   # -> GCP_WORKLOAD_IDENTITY_PROVIDER
+terraform output -raw github_actions_deploy_service_account       # -> GCP_DEPLOY_SERVICE_ACCOUNT
+```
+
+Before applying, set `github_repository` in `terraform.tfvars` to the exact `owner/repo` this code is pushed to — it's the attribute condition that restricts which GitHub repository is allowed to assume the deploy identity.

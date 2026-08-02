@@ -147,6 +147,22 @@ variable "gke_workload_identity_ksa" {
   default     = "vertex-chat-ksa"
 }
 
+variable "github_repository" {
+  description = "GitHub repository allowed to assume the CI/CD deploy identity via Workload Identity Federation, in \"owner/repo\" format (e.g. mevijays/vertex-chat). Only this exact repository can impersonate the deploy service account."
+  type        = string
+
+  validation {
+    condition     = can(regex("^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$", var.github_repository))
+    error_message = "github_repository must be in \"owner/repo\" format."
+  }
+}
+
+variable "deploy_service_account_id" {
+  description = "Account ID for the GitHub Actions GKE-deploy service account."
+  type        = string
+  default     = "gke-deployer"
+}
+
 # =============================================================================
 # Required APIs and Artifact Registry
 # =============================================================================
@@ -160,7 +176,9 @@ locals {
     "container.googleapis.com",
     "gkehub.googleapis.com",
     "iam.googleapis.com",
+    "iamcredentials.googleapis.com",
     "mesh.googleapis.com",
+    "sts.googleapis.com",
   ])
 }
 
@@ -377,6 +395,71 @@ resource "google_gke_hub_feature_membership" "mesh" {
 }
 
 # =============================================================================
+# GitHub Actions Workload Identity Federation + deploy service account
+#
+# Lets the deploy.yml workflow authenticate to GCP with no stored key: GitHub
+# mints a short-lived OIDC token for the run, which this pool/provider trusts
+# in exchange for impersonating the deploy GSA below — but only for workflow
+# runs from var.github_repository specifically (see attribute_condition).
+# =============================================================================
+
+resource "google_iam_workload_identity_pool" "github_actions" {
+  project                   = var.project_id
+  workload_identity_pool_id = "github-actions"
+  display_name              = "GitHub Actions"
+  description               = "Workload Identity Federation pool for GitHub Actions OIDC tokens."
+
+  depends_on = [google_project_service.required]
+}
+
+resource "google_iam_workload_identity_pool_provider" "github_actions" {
+  project                            = var.project_id
+  workload_identity_pool_id          = google_iam_workload_identity_pool.github_actions.workload_identity_pool_id
+  workload_identity_pool_provider_id = "github"
+  display_name                       = "GitHub"
+
+  attribute_mapping = {
+    "google.subject"       = "assertion.sub"
+    "attribute.repository" = "assertion.repository"
+    "attribute.actor"      = "assertion.actor"
+    "attribute.ref"        = "assertion.ref"
+  }
+
+  # Restrict to this exact repository — without this, ANY GitHub Actions
+  # workflow from ANY repository could request tokens against this provider.
+  attribute_condition = "assertion.repository == \"${var.github_repository}\""
+
+  oidc {
+    issuer_uri = "https://token.actions.githubusercontent.com"
+  }
+}
+
+resource "google_service_account" "gke_deployer" {
+  project      = var.project_id
+  account_id   = var.deploy_service_account_id
+  display_name = "GitHub Actions GKE deployer"
+  description  = "Deploys to GKE from GitHub Actions via Workload Identity Federation. No key is ever created for this account."
+
+  depends_on = [google_project_service.required["iam.googleapis.com"]]
+}
+
+# Lets workflow runs from var.github_repository impersonate this GSA — no key involved.
+resource "google_service_account_iam_member" "gke_deployer_wif_binding" {
+  service_account_id = google_service_account.gke_deployer.name
+  role               = "roles/iam.workloadIdentityUser"
+  member             = "principalSet://iam.googleapis.com/${google_iam_workload_identity_pool.github_actions.name}/attribute.repository/${var.github_repository}"
+}
+
+# Least privilege for `kubectl` access (via get-gke-credentials + apply) —
+# roles/container.developer, not container.admin: it can manage workloads on
+# existing clusters but cannot create/delete/reconfigure the cluster itself.
+resource "google_project_iam_member" "gke_deployer_container_developer" {
+  project = var.project_id
+  role    = "roles/container.developer"
+  member  = "serviceAccount:${google_service_account.gke_deployer.email}"
+}
+
+# =============================================================================
 # Outputs
 # =============================================================================
 
@@ -419,4 +502,14 @@ output "gke_cluster_endpoint" {
 output "gke_fleet_membership_id" {
   description = "Fleet membership ID the cluster is registered under. Check mesh provisioning status with: gcloud container fleet mesh describe --project <project_id>."
   value       = google_gke_hub_membership.gke.membership_id
+}
+
+output "github_actions_workload_identity_provider" {
+  description = "Set this as the GitHub repo variable GCP_WORKLOAD_IDENTITY_PROVIDER (used by .github/workflows/deploy.yml)."
+  value       = google_iam_workload_identity_pool_provider.github_actions.name
+}
+
+output "github_actions_deploy_service_account" {
+  description = "Set this as the GitHub repo variable GCP_DEPLOY_SERVICE_ACCOUNT (used by .github/workflows/deploy.yml)."
+  value       = google_service_account.gke_deployer.email
 }

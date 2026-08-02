@@ -1,0 +1,112 @@
+name: Docker publish
+
+on:
+  workflow_dispatch:
+    inputs:
+      platforms:
+        description: "Target platforms"
+        type: string
+        default: "linux/amd64,linux/arm64"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  docker:
+    name: Build & push image
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      image_digest_ref: ${{ steps.summary_data.outputs.digest_ref }}
+      image_version_ref: ${{ steps.summary_data.outputs.version_ref }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set image name (lowercase)
+        run: echo "IMAGE_NAME=$(echo 'ghcr.io/${{ github.repository }}' | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_ENV"
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract image metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.IMAGE_NAME }}
+          tags: |
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=ref,event=branch
+            type=raw,value=v${{ github.run_number }}.0.0
+            type=sha,format=short
+
+      - name: Build and push
+        id: docker_build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: ${{ inputs.platforms }}
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Compute summary data
+        id: summary_data
+        run: |
+          digest_ref="${IMAGE_NAME}@${{ steps.docker_build.outputs.digest }}"
+          echo "digest_ref=${digest_ref}" >> "$GITHUB_OUTPUT"
+
+          version_tag="v${{ github.run_number }}.0.0"
+          echo "version_tag=${version_tag}" >> "$GITHUB_OUTPUT"
+          echo "version_ref=${IMAGE_NAME}:${version_tag}" >> "$GITHUB_OUTPUT"
+
+          # GHCR package page: ghcr.io/<owner>/<pkg> -> github.com/<owner>/<repo>/pkgs/container/<pkg>
+          pkg_name="${IMAGE_NAME#ghcr.io/*/}"
+          owner="$(echo '${{ github.repository_owner }}' | tr '[:upper:]' '[:lower:]')"
+          echo "package_url=https://github.com/${owner}/${pkg_name}/pkgs/container/${pkg_name}" >> "$GITHUB_OUTPUT"
+
+      - name: Publish image summary
+        if: always()
+        run: |
+          {
+            echo "## 🐳 Container image published"
+            echo
+            echo "Use the digest-pinned reference below for deploys — it always resolves to exactly this build, unlike a mutable tag."
+            echo
+            echo "| | |"
+            echo "| --- | --- |"
+            echo "| **Version** | \`${{ steps.summary_data.outputs.version_tag }}\` (build #${{ github.run_number }}) |"
+            echo "| **Version reference** | \`${{ steps.summary_data.outputs.version_ref }}\` |"
+            echo "| **Digest-pinned reference** | \`${{ steps.summary_data.outputs.digest_ref }}\` |"
+            echo "| **Digest** | \`${{ steps.docker_build.outputs.digest }}\` |"
+            echo "| **Platforms** | \`${{ inputs.platforms }}\` |"
+            echo "| **GHCR package page** | ${{ steps.summary_data.outputs.package_url }} |"
+            echo "| **Triggered by** | @${{ github.actor }} on \`${{ github.ref_name }}\` (${{ github.sha }}) |"
+            echo
+
+            echo "**All tags pushed:**"
+            echo
+            echo '```text'
+            echo "${{ steps.meta.outputs.tags }}"
+            echo '```'
+            echo
+            echo "_Copy the digest-pinned reference above into the **Deploy to GKE** workflow's \`image\` input._"
+          } >> "$GITHUB_STEP_SUMMARY"
