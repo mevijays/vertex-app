@@ -1,0 +1,135 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="theme-color" content="#10130f">
+    <meta name="description" content="A fast, private chat interface powered by Gemini on Vertex AI.">
+    <title>Vertex Chat</title>
+    <link rel="stylesheet" href="/styles.css">
+  </head>
+  <body>
+    <div class="app-shell">
+      <aside class="sidebar" id="sidebar" aria-label="Conversation history">
+        <div class="brand-row">
+          <a class="brand" href="/" aria-label="Vertex Chat home">
+            <span class="brand-mark" aria-hidden="true">V</span>
+            <span>Vertex Chat</span>
+          </a>
+          <button class="icon-button mobile-only" id="close-sidebar" aria-label="Close history">×</button>
+        </div>
+
+        <button class="new-chat" id="new-chat">
+          <span aria-hidden="true">＋</span>
+          New conversation
+          <kbd>⌘ K</kbd>
+        </button>
+
+        <div class="history-label">
+          <span>Recent</span>
+          <span id="history-count">0</span>
+        </div>
+        <nav class="history-list" id="history-list" aria-label="Saved conversations"></nav>
+
+        <div class="sidebar-footer">
+          <button class="sidebar-action" id="settings-button" aria-haspopup="dialog">
+            <span aria-hidden="true">⚙</span>
+            Preferences
+          </button>
+          <div class="privacy-note">
+            <span class="status-dot" aria-hidden="true"></span>
+            History stays in this browser
+          </div>
+        </div>
+      </aside>
+
+      <div class="sidebar-scrim" id="sidebar-scrim"></div>
+
+      <main class="main-panel">
+        <header class="topbar">
+          <button class="icon-button menu-button" id="open-sidebar" aria-label="Open conversation history">☰</button>
+          <div class="model-pill" title="Active Vertex AI model">
+            <span class="model-spark" aria-hidden="true">✦</span>
+            <span id="model-name">Gemini 3.5 Flash</span>
+            <span class="model-state">Live</span>
+          </div>
+          <div class="topbar-actions">
+            <button class="icon-button" id="theme-button" aria-label="Toggle color theme">◐</button>
+            <button class="icon-button" id="clear-chat" aria-label="Clear current conversation">⌫</button>
+          </div>
+        </header>
+
+        <section class="conversation" id="conversation" aria-live="polite">
+          <div class="welcome" id="welcome">
+            <div class="welcome-orbit" aria-hidden="true">
+              <span>✦</span>
+            </div>
+            <p class="eyebrow">VERTEX AI · GEMINI</p>
+            <h1>What are we<br><em>exploring today?</em></h1>
+            <p class="welcome-copy">Think through an idea, understand a complex topic, or turn a rough thought into something useful.</p>
+            <div class="suggestion-grid">
+              <button class="suggestion" data-prompt="Help me turn a rough product idea into a focused one-page brief.">
+                <span class="suggestion-icon coral">↗</span>
+                <strong>Shape an idea</strong>
+                <small>From rough thought to clear brief</small>
+              </button>
+              <button class="suggestion" data-prompt="Explain a difficult technical concept to me with a concrete analogy and example.">
+                <span class="suggestion-icon violet">◎</span>
+                <strong>Learn deeply</strong>
+                <small>Make a hard concept click</small>
+              </button>
+              <button class="suggestion" data-prompt="Review this plan with me. First ask what outcome I want, then identify risks and next steps.">
+                <span class="suggestion-icon lime">✓</span>
+                <strong>Stress-test a plan</strong>
+                <small>Find gaps before they matter</small>
+              </button>
+            </div>
+          </div>
+          <div class="messages" id="messages"></div>
+        </section>
+
+        <div class="composer-wrap">
+          <form class="composer" id="composer">
+            <textarea id="prompt" rows="1" maxlength="120000" placeholder="Message Vertex Chat…" aria-label="Message"></textarea>
+            <div class="composer-row">
+              <span class="composer-hint"><kbd>Enter</kbd> send · <kbd>Shift Enter</kbd> new line</span>
+              <button class="send-button" id="send-button" type="submit" aria-label="Send message">↑</button>
+              <button class="stop-button hidden" id="stop-button" type="button" aria-label="Stop generating">■</button>
+            </div>
+          </form>
+          <p class="disclaimer">Gemini can make mistakes. Check important information.</p>
+        </div>
+      </main>
+    </div>
+
+    <dialog class="settings-dialog" id="settings-dialog">
+      <form method="dialog" class="settings-card">
+        <header>
+          <div>
+            <p class="eyebrow">CONVERSATION</p>
+            <h2>Preferences</h2>
+          </div>
+          <button class="icon-button" value="cancel" aria-label="Close preferences">×</button>
+        </header>
+        <label class="setting-field">
+          <span>System instruction</span>
+          <textarea id="system-prompt" rows="5" maxlength="6000"></textarea>
+          <small>Applied to new requests in every conversation.</small>
+        </label>
+        <label class="setting-field range-field">
+          <span>Creativity <output id="temperature-value">0.7</output></span>
+          <input id="temperature" type="range" min="0" max="2" step="0.1" value="0.7">
+          <small>Lower is more focused; higher is more exploratory.</small>
+        </label>
+        <div class="settings-actions">
+          <button class="secondary-button" id="reset-settings" type="button">Reset</button>
+          <button class="primary-button" id="save-settings" value="default">Save preferences</button>
+        </div>
+      </form>
+    </dialog>
+
+    <div class="toast" id="toast" role="status"></div>
+    <script src="/app.js" defer></script>
+  </body>
+</html>
+

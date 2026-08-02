@@ -1,0 +1,120 @@
+# Vertex Chat — GKE manifests
+#
+# Assumes GKE Workload Identity is enabled on the cluster. The ServiceAccount
+# below is the Kubernetes-side half of the KSA <-> GSA binding described in
+# the architecture doc (section 5.3): it must be linked to the runtime GSA
+# (see main.tf) via:
+#
+#   gcloud iam service-accounts add-iam-policy-binding \
+#     vertex-gemini-client@YOUR_PROJECT_ID.iam.gserviceaccount.com \
+#     --role roles/iam.workloadIdentityUser \
+#     --member "serviceAccount:YOUR_PROJECT_ID.svc.id.goog[default/vertex-chat-ksa]"
+#
+# Image defaults to the Artifact Registry image built via `gcloud builds
+# submit` (see README). Swap it for artifactory.mylab.lan/vertex-chat:v1 (plus
+# imagePullSecrets, see commented block below) once the private registry path
+# is wired up.
+#
+# Service type is LoadBalancer per request: GKE provisions a regional
+# external L4 TCP load balancer with a public IP, forwarding plain HTTP on
+# :80 to the pods' :8080. This does not include TLS termination or Cloud
+# Armor — that requires an Ingress + BackendConfig (L7 HTTPS LB) instead, as
+# shown in the proposed architecture diagram. Add that layer before exposing
+# this to real users.
+
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: vertex-chat-ksa
+  namespace: default
+  annotations:
+    iam.gke.io/gcp-service-account: vertex-gemini-client@YOUR_PROJECT_ID.iam.gserviceaccount.com
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: vertex-chat
+  namespace: default
+  labels:
+    app: vertex-chat
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: vertex-chat
+  template:
+    metadata:
+      labels:
+        app: vertex-chat
+    spec:
+      serviceAccountName: vertex-chat-ksa
+      containers:
+        - name: vertex-chat
+          image: europe-west3-docker.pkg.dev/YOUR_PROJECT_ID/vertex-chat/vertex-chat:v1
+          # imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 8080
+          env:
+            - name: GOOGLE_CLOUD_PROJECT
+              value: "YOUR_PROJECT_ID"
+            - name: GOOGLE_CLOUD_LOCATION
+              value: "global"
+            - name: GOOGLE_GENAI_USE_VERTEXAI
+              value: "true"
+            - name: MODEL_ID
+              value: "gemini-3.5-flash"
+            - name: REQUEST_TIMEOUT
+              value: "300s"
+          resources:
+            requests:
+              cpu: "250m"
+              memory: "256Mi"
+            limits:
+              cpu: "1"
+              memory: "512Mi"
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 2
+            periodSeconds: 5
+            timeoutSeconds: 2
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 15
+            timeoutSeconds: 2
+            failureThreshold: 3
+          securityContext:
+            runAsNonRoot: true
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+      # Uncomment when pulling from a private registry (e.g. artifactory.mylab.lan)
+      # that isn't Google Artifact Registry:
+      # imagePullSecrets:
+      #   - name: artifactory-pull-cred
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: vertex-chat
+  namespace: default
+  labels:
+    app: vertex-chat
+spec:
+  type: LoadBalancer
+  selector:
+    app: vertex-chat
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+      protocol: TCP

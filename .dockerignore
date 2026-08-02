@@ -1,0 +1,10 @@
+.git
+.gitignore
+.terraform
+*.tfstate
+*.tfstate.*
+*.tfplan
+terraform.tfvars
+coverage.out
+README.md
+

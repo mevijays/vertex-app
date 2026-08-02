@@ -1,0 +1,237 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Vertex Chat API",
+    "version": "1.0.0",
+    "description": "An OpenAI-compatible Chat Completions API backed by Gemini 3.5 Flash on Vertex AI. The endpoint supports regular JSON responses and OpenAI-style Server-Sent Event streaming. Conversation state is supplied by the caller in the messages array; the server does not persist API conversations."
+  },
+  "servers": [
+    {
+      "url": "/",
+      "description": "Current Vertex Chat service"
+    }
+  ],
+  "tags": [
+    {
+      "name": "Chat",
+      "description": "Generate model responses from a conversation"
+    }
+  ],
+  "paths": {
+    "/v1/chat/completions": {
+      "post": {
+        "tags": ["Chat"],
+        "summary": "Create a chat completion",
+        "description": "Generates a response from the configured Gemini model. Set stream to true to receive text/event-stream chunks. A stream starts with an assistant-role delta, continues with content deltas, ends with a stop finish_reason, and is followed by data: [DONE].",
+        "operationId": "createChatCompletion",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ChatCompletionRequest"
+              },
+              "examples": {
+                "standard": {
+                  "summary": "Regular response",
+                  "value": {
+                    "model": "gemini-3.5-flash",
+                    "messages": [
+                      {"role": "system", "content": "Be concise and precise."},
+                      {"role": "user", "content": "Explain workload identity in one paragraph."}
+                    ],
+                    "temperature": 0.7
+                  }
+                },
+                "streaming": {
+                  "summary": "Streamed response",
+                  "value": {
+                    "model": "gemini-3.5-flash",
+                    "messages": [
+                      {"role": "user", "content": "Write a short deployment checklist."}
+                    ],
+                    "stream": true
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "A completed JSON response or an SSE stream, depending on the stream request field.",
+            "content": {
+              "application/json": {
+                "schema": {"$ref": "#/components/schemas/ChatCompletion"}
+              },
+              "text/event-stream": {
+                "schema": {
+                  "type": "string",
+                  "description": "A sequence of data lines containing ChatCompletionChunk JSON, terminated by data: [DONE]."
+                },
+                "example": "data: {\"id\":\"chatcmpl-example\",\"object\":\"chat.completion.chunk\",\"created\":1710000000,\"model\":\"gemini-3.5-flash\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"Hello\"},\"finish_reason\":null}]}\n\ndata: [DONE]\n\n"
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid JSON or unsupported request value.",
+            "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ErrorResponse"}}}
+          },
+          "429": {
+            "description": "The per-instance concurrent generation limit was reached.",
+            "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ErrorResponse"}}}
+          },
+          "502": {
+            "description": "Vertex AI could not generate a response.",
+            "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ErrorResponse"}}}
+          },
+          "504": {
+            "description": "Model generation exceeded the configured timeout.",
+            "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ErrorResponse"}}}
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "ChatCompletionRequest": {
+        "type": "object",
+        "required": ["messages"],
+        "additionalProperties": false,
+        "properties": {
+          "model": {
+            "type": "string",
+            "default": "gemini-3.5-flash",
+            "description": "Must match the model configured on the server."
+          },
+          "messages": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 100,
+            "items": {"$ref": "#/components/schemas/ChatMessage"}
+          },
+          "stream": {
+            "type": "boolean",
+            "default": false
+          },
+          "temperature": {
+            "type": "number",
+            "format": "float",
+            "minimum": 0,
+            "maximum": 2,
+            "default": 1
+          },
+          "top_p": {
+            "type": "number",
+            "format": "float",
+            "minimum": 0,
+            "maximum": 1
+          },
+          "max_tokens": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 1,
+            "description": "Maximum output tokens. Omit to use the model default."
+          },
+          "stop": {
+            "description": "One stop sequence or an array of up to five stop sequences.",
+            "oneOf": [
+              {"type": "string"},
+              {"type": "array", "maxItems": 5, "items": {"type": "string"}}
+            ]
+          },
+          "n": {
+            "type": "integer",
+            "enum": [1],
+            "default": 1,
+            "description": "Only one candidate is supported."
+          }
+        }
+      },
+      "ChatMessage": {
+        "type": "object",
+        "required": ["role", "content"],
+        "additionalProperties": false,
+        "properties": {
+          "role": {
+            "type": "string",
+            "enum": ["system", "developer", "user", "assistant"]
+          },
+          "content": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Text content. Multimodal content arrays and tool messages are not currently supported."
+          }
+        }
+      },
+      "ChatCompletion": {
+        "type": "object",
+        "required": ["id", "object", "created", "model", "choices", "usage"],
+        "properties": {
+          "id": {"type": "string", "example": "chatcmpl-8e12f2a3"},
+          "object": {"type": "string", "const": "chat.completion"},
+          "created": {"type": "integer", "format": "int64"},
+          "model": {"type": "string", "example": "gemini-3.5-flash"},
+          "choices": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["index", "message", "finish_reason"],
+              "properties": {
+                "index": {"type": "integer", "const": 0},
+                "message": {
+                  "type": "object",
+                  "required": ["role", "content"],
+                  "properties": {
+                    "role": {"type": "string", "const": "assistant"},
+                    "content": {"type": "string"}
+                  }
+                },
+                "finish_reason": {"type": "string", "enum": ["stop"]}
+              }
+            }
+          },
+          "usage": {"$ref": "#/components/schemas/Usage"}
+        }
+      },
+      "ChatCompletionChunk": {
+        "type": "object",
+        "description": "JSON object carried in each SSE data event.",
+        "properties": {
+          "id": {"type": "string"},
+          "object": {"type": "string", "const": "chat.completion.chunk"},
+          "created": {"type": "integer", "format": "int64"},
+          "model": {"type": "string"},
+          "choices": {"type": "array", "items": {"type": "object"}}
+        }
+      },
+      "Usage": {
+        "type": "object",
+        "required": ["prompt_tokens", "completion_tokens", "total_tokens"],
+        "properties": {
+          "prompt_tokens": {"type": "integer", "format": "int32"},
+          "completion_tokens": {"type": "integer", "format": "int32"},
+          "total_tokens": {"type": "integer", "format": "int32"}
+        }
+      },
+      "ErrorResponse": {
+        "type": "object",
+        "required": ["error"],
+        "properties": {
+          "error": {
+            "type": "object",
+            "required": ["message", "type", "code"],
+            "properties": {
+              "message": {"type": "string"},
+              "type": {"type": "string", "example": "invalid_request_error"},
+              "param": {"type": ["string", "null"], "example": "messages"},
+              "code": {"type": "string", "example": "invalid_value"}
+            }
+          }
+        }
+      }
+    }
+  }
+}
+

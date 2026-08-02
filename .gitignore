@@ -1,0 +1,28 @@
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfplan
+tfplan
+terraform.tfvars
+crash.log
+crash.*.log
+/server
+coverage.out
+.DS_Store
+
+# Credentials — should never exist in this repo, but guard against accidents
+*.pem
+*.key
+*.p12
+credentials.json
+service-account*.json
+*-key.json
+*-credentials.json
+.env
+.env.*
+application_default_credentials.json
+
+# Editor / OS cruft
+.vscode/
+.idea/
+*.swp
