@@ -42,6 +42,16 @@ metadata:
     app: vertex-chat
 spec:
   replicas: 2
+  # maxSurge: 0 is deliberate. The default (25%) starts a new pod *before*
+  # retiring an old one, which needs spare CPU the cluster doesn't have — the
+  # rollout then deadlocks: old pods hold the CPU new pods are waiting for, and
+  # the Deployment won't retire them until the new ones are Available. Surging
+  # to zero trades a brief dip to 1 replica for a rollout that always converges.
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 0
+      maxUnavailable: 1
   selector:
     matchLabels:
       app: vertex-chat
@@ -69,10 +79,15 @@ spec:
               value: "gemini-3.5-flash"
             - name: REQUEST_TIMEOUT
               value: "300s"
+          # Kept small deliberately: a 3-node e2-medium cluster has only ~940m
+          # allocatable CPU per node, and GKE system pods + Managed Service Mesh
+          # (istio-cni, gke-metadata-server, GMP, kube-dns) already reserve most
+          # of it. Larger requests leave replicas Pending with "Insufficient
+          # cpu". Limits stay high so the app can still burst.
           resources:
             requests:
-              cpu: "250m"
-              memory: "256Mi"
+              cpu: "100m"
+              memory: "128Mi"
             limits:
               cpu: "1"
               memory: "512Mi"
@@ -94,6 +109,11 @@ spec:
             failureThreshold: 3
           securityContext:
             runAsNonRoot: true
+            # The distroless base declares `USER nonroot` by *name*, which the
+            # kubelet cannot verify against runAsNonRoot ("image has non-numeric
+            # user (nonroot), cannot verify user is non-root"). 65532 is that
+            # user's numeric UID, so the check passes without weakening it.
+            runAsUser: 65532
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true
             capabilities:
