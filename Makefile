@@ -7,7 +7,7 @@ test:
 	go test ./...
 
 run-mock:
-	DEV_MOCK=true go run ./cmd/server
+	DEV_MOCK=true AUTH_TOKEN=dev-local-token COOKIE_SECURE=false go run ./cmd/server
 
 docker-build:
 	docker build -t vertex-chat:local .

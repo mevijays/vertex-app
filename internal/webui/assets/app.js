@@ -43,8 +43,9 @@ const elements = {
   loginError: document.querySelector("#login-error"),
   attachmentsStrip: document.querySelector("#attachments-strip"),
   fileInput: document.querySelector("#file-input"),
-  promptsDialog: document.querySelector("#prompts-dialog"),
+  manageDialog: document.querySelector("#manage-dialog"),
   promptsList: document.querySelector("#prompts-list"),
+  conversationsList: document.querySelector("#conversations-list"),
 };
 
 let state = loadState();
@@ -631,7 +632,7 @@ async function renderPromptsList() {
     body.addEventListener("click", () => {
       elements.prompt.value = prompt.content;
       resizePrompt();
-      elements.promptsDialog.close();
+      elements.manageDialog.close();
       elements.prompt.focus();
     });
 
@@ -649,6 +650,172 @@ async function renderPromptsList() {
     item.append(body, remove);
     elements.promptsList.append(item);
   }
+}
+
+async function loadConversations() {
+  try {
+    const response = await fetch("/api/conversations");
+    if (!response.ok) return [];
+    const data = await response.json();
+    return data.conversations || [];
+  } catch {
+    return [];
+  }
+}
+
+async function renderConversationsList() {
+  const conversations = await loadConversations();
+  elements.conversationsList.replaceChildren();
+  if (!conversations.length) {
+    const empty = document.createElement("p");
+    empty.className = "prompts-empty";
+    empty.textContent = "No server-stored conversations yet — one is created the first time you attach a document, or when an API caller sends conversation_id.";
+    elements.conversationsList.append(empty);
+    return;
+  }
+  for (const conv of conversations) {
+    elements.conversationsList.append(conversationItemElement(conv));
+  }
+}
+
+function conversationItemElement(conv) {
+  const item = document.createElement("div");
+  item.className = "conversation-item";
+
+  const row = document.createElement("div");
+  row.className = "conversation-item-row";
+
+  const body = document.createElement("button");
+  body.type = "button";
+  body.className = "prompt-item-body";
+  const title = document.createElement("div");
+  title.className = "prompt-item-title";
+  title.textContent = conv.title || "(untitled)";
+  const meta = document.createElement("div");
+  meta.className = "prompt-item-content";
+  const docCount = `${conv.document_count} document${conv.document_count === 1 ? "" : "s"}`;
+  meta.textContent = `${conv.message_count} messages · ${docCount} · updated ${new Date(conv.updated_at).toLocaleString()}`;
+  body.append(title, meta);
+
+  const docsContainer = document.createElement("div");
+  docsContainer.className = "conversation-documents hidden";
+  body.addEventListener("click", () => toggleConversationDocuments(conv.id, docsContainer));
+
+  const remove = document.createElement("button");
+  remove.type = "button";
+  remove.className = "prompt-item-delete";
+  remove.setAttribute("aria-label", `Delete ${conv.title || "conversation"}`);
+  remove.innerHTML = '<i class="fa fa-trash-o"></i>';
+  remove.addEventListener("click", async (event) => {
+    event.stopPropagation();
+    if (!window.confirm(`Delete "${conv.title || "this conversation"}" and its documents? This can't be undone.`)) return;
+    await fetch(`/api/conversations/${conv.id}`, { method: "DELETE" });
+    unlinkLocalConversation(conv.id);
+    renderConversationsList();
+  });
+
+  row.append(body, remove);
+  item.append(row, docsContainer);
+  return item;
+}
+
+async function toggleConversationDocuments(conversationId, container) {
+  if (!container.classList.contains("hidden")) {
+    container.classList.add("hidden");
+    return;
+  }
+  container.classList.remove("hidden");
+  container.replaceChildren(document.createTextNode("Loading…"));
+  try {
+    const response = await fetch(`/api/conversations/${conversationId}`);
+    if (!response.ok) throw new Error(await readAPIError(response));
+    const data = await response.json();
+    container.replaceChildren();
+    if (!data.documents?.length) {
+      const empty = document.createElement("p");
+      empty.className = "prompts-empty";
+      empty.textContent = "No documents attached.";
+      container.append(empty);
+      return;
+    }
+    for (const doc of data.documents) {
+      container.append(conversationDocumentChip(conversationId, doc, container));
+    }
+  } catch (error) {
+    container.replaceChildren(document.createTextNode(`Failed to load: ${error.message}`));
+  }
+}
+
+function conversationDocumentChip(conversationId, doc, container) {
+  const chip = document.createElement("span");
+  chip.className = `attachment-chip ${doc.status}`;
+  chip.style.marginRight = "6px";
+  chip.style.marginBottom = "6px";
+
+  const icon = document.createElement("i");
+  icon.className =
+    doc.status === "ready" ? "fa fa-check-circle-o" : doc.status === "failed" ? "fa fa-warning" : "fa fa-spinner fa-spin";
+  chip.append(icon, document.createTextNode(` ${doc.filename}`));
+
+  const remove = document.createElement("button");
+  remove.type = "button";
+  remove.className = "attachment-remove";
+  remove.setAttribute("aria-label", `Remove ${doc.filename}`);
+  remove.innerHTML = '<i class="fa fa-times"></i>';
+  remove.addEventListener("click", async (event) => {
+    event.stopPropagation();
+    await fetch(`/api/conversations/${conversationId}/documents/${doc.id}`, { method: "DELETE" });
+    unlinkLocalDocument(conversationId, doc.id);
+    container.classList.add("hidden");
+    toggleConversationDocuments(conversationId, container);
+  });
+  chip.append(remove);
+  return chip;
+}
+
+// Deleting server-side data through the manage screen can orphan a local
+// chat's reference to it — clear that reference so the chat doesn't keep
+// showing attachments (or try reusing a conversation_id) that no longer exist.
+function unlinkLocalConversation(conversationId) {
+  let changed = false;
+  for (const chat of state.chats) {
+    if (chat.conversationId === conversationId) {
+      chat.conversationId = null;
+      chat.documents = [];
+      changed = true;
+    }
+  }
+  if (changed) {
+    saveState();
+    renderAttachments();
+  }
+}
+
+function unlinkLocalDocument(conversationId, docId) {
+  let changed = false;
+  for (const chat of state.chats) {
+    if (chat.conversationId === conversationId && chat.documents?.length) {
+      const before = chat.documents.length;
+      chat.documents = chat.documents.filter((d) => d.id !== docId);
+      if (chat.documents.length !== before) changed = true;
+    }
+  }
+  if (changed) {
+    saveState();
+    renderAttachments();
+  }
+}
+
+function showManageTab(tab) {
+  const isConversations = tab === "conversations";
+  document.querySelector("#tab-conversations").classList.toggle("active", isConversations);
+  document.querySelector("#tab-prompts").classList.toggle("active", !isConversations);
+  document.querySelector("#tab-conversations").setAttribute("aria-selected", String(isConversations));
+  document.querySelector("#tab-prompts").setAttribute("aria-selected", String(!isConversations));
+  document.querySelector("#conversations-panel").classList.toggle("hidden", !isConversations);
+  document.querySelector("#prompts-panel").classList.toggle("hidden", isConversations);
+  if (isConversations) renderConversationsList();
+  else renderPromptsList();
 }
 
 async function saveCurrentPromptText(text, title) {
@@ -763,11 +930,13 @@ elements.loginForm.addEventListener("submit", async (event) => {
 document.querySelector("#attach-button").addEventListener("click", () => elements.fileInput.click());
 elements.fileInput.addEventListener("change", handleFileSelected);
 
-document.querySelector("#prompts-button").addEventListener("click", () => {
-  elements.promptsDialog.showModal();
-  renderPromptsList();
+document.querySelector("#manage-button").addEventListener("click", () => {
+  elements.manageDialog.showModal();
+  showManageTab("conversations");
 });
-document.querySelector("#close-prompts").addEventListener("click", () => elements.promptsDialog.close());
+document.querySelector("#close-manage").addEventListener("click", () => elements.manageDialog.close());
+document.querySelector("#tab-conversations").addEventListener("click", () => showManageTab("conversations"));
+document.querySelector("#tab-prompts").addEventListener("click", () => showManageTab("prompts"));
 document.querySelector("#save-prompt-form").addEventListener("submit", async (event) => {
   event.preventDefault();
   const titleInput = document.querySelector("#new-prompt-title");

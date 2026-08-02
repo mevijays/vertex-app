@@ -46,9 +46,9 @@
         <nav class="history-list" id="history-list" aria-label="Saved conversations"></nav>
 
         <div class="sidebar-footer">
-          <button class="sidebar-action" id="prompts-button" aria-haspopup="dialog">
-            <i class="fa fa-bookmark" aria-hidden="true"></i>
-            Saved prompts
+          <button class="sidebar-action" id="manage-button" aria-haspopup="dialog">
+            <i class="fa fa-database" aria-hidden="true"></i>
+            Manage data
           </button>
           <button class="sidebar-action" id="settings-button" aria-haspopup="dialog">
             <i class="fa fa-cog" aria-hidden="true"></i>
@@ -152,23 +152,40 @@
       </form>
     </dialog>
 
-    <dialog class="prompts-dialog" id="prompts-dialog">
+    <dialog class="prompts-dialog manage-dialog" id="manage-dialog">
       <div class="prompts-card">
         <header>
           <div>
             <p class="eyebrow">LIBRARY</p>
-            <h2>Saved prompts</h2>
+            <h2>Manage data</h2>
           </div>
-          <button class="icon-button" id="close-prompts" aria-label="Close saved prompts"><i class="fa fa-times"></i></button>
+          <button class="icon-button" id="close-manage" aria-label="Close manage data"><i class="fa fa-times"></i></button>
         </header>
-        <div class="prompts-list" id="prompts-list"></div>
-        <form class="save-prompt-form" id="save-prompt-form">
-          <input id="new-prompt-title" type="text" maxlength="200" placeholder="Title (optional)">
-          <textarea id="new-prompt-content" rows="3" maxlength="6000" placeholder="Prompt text…" style="width:100%; margin-bottom:8px; padding:8px 12px; border-radius:10px; border:1px solid var(--line); background:var(--bg); color:var(--ink);"></textarea>
-          <div class="prompts-actions">
-            <button class="primary-button" type="submit">Save prompt</button>
-          </div>
-        </form>
+
+        <div class="manage-tabs" role="tablist">
+          <button class="manage-tab active" id="tab-conversations" type="button" role="tab" aria-selected="true">
+            <i class="fa fa-comments-o" aria-hidden="true"></i> Conversations
+          </button>
+          <button class="manage-tab" id="tab-prompts" type="button" role="tab" aria-selected="false">
+            <i class="fa fa-bookmark" aria-hidden="true"></i> Saved prompts
+          </button>
+        </div>
+
+        <div id="conversations-panel">
+          <p class="manage-hint">Conversations stored on the server — created when a document is attached or when an API caller sends <code>conversation_id</code>. Deleting one removes its messages and documents too.</p>
+          <div class="prompts-list" id="conversations-list"></div>
+        </div>
+
+        <div id="prompts-panel" class="hidden">
+          <div class="prompts-list" id="prompts-list"></div>
+          <form class="save-prompt-form" id="save-prompt-form">
+            <input id="new-prompt-title" type="text" maxlength="200" placeholder="Title (optional)">
+            <textarea id="new-prompt-content" rows="3" maxlength="6000" placeholder="Prompt text…" style="width:100%; margin-bottom:8px; padding:8px 12px; border-radius:10px; border:1px solid var(--line); background:var(--bg); color:var(--ink);"></textarea>
+            <div class="prompts-actions">
+              <button class="primary-button" type="submit">Save prompt</button>
+            </div>
+          </form>
+        </div>
       </div>
     </dialog>
 
