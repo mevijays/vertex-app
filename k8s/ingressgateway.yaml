@@ -32,6 +32,34 @@ metadata:
   namespace: istio-ingress
 
 ---
+# Lets the gateway proxy read the TLS Secret cert-manager writes
+# (k8s/cert-manager-issuer.yaml) via SDS, referenced from the Gateway
+# resource's tls.credentialName below.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: istio-ingressgateway-sds
+  namespace: istio-ingress
+rules:
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["get", "list", "watch"]
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: istio-ingressgateway-sds
+  namespace: istio-ingress
+subjects:
+  - kind: ServiceAccount
+    name: istio-ingressgateway
+roleRef:
+  kind: Role
+  name: istio-ingressgateway-sds
+  apiGroup: rbac.authorization.k8s.io
+
+---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -92,6 +120,13 @@ spec:
     - name: http
       port: 80
       targetPort: 8080
+    - name: https
+      port: 443
+      # 8443, not 443: the proxy runs as non-root (runAsNonRoot above) and
+      # can't bind ports <1024, so Istio's gateway injection remaps
+      # privileged ports it's given in the Gateway resource below (443) to
+      # 8000+port internally — the same reason port 80 above targets 8080.
+      targetPort: 8443
 
 ---
 apiVersion: networking.istio.io/v1beta1
@@ -109,3 +144,15 @@ spec:
         protocol: HTTP
       hosts:
         - "*"
+    - port:
+        number: 443
+        name: https
+        protocol: HTTPS
+      tls:
+        mode: SIMPLE
+        # Populated by cert-manager (k8s/cert-manager-issuer.yaml) once the
+        # Certificate is issued — this Secret doesn't exist until then, so
+        # this listener stays inactive/unhealthy until issuance succeeds.
+        credentialName: vertex-chat-tls
+      hosts:
+        - "vertex.mevijay.io"

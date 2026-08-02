@@ -1,0 +1,63 @@
+# Let's Encrypt ClusterIssuer (DNS-01 via Cloudflare) + Certificate for
+# vertex.mevijay.io.
+#
+# Why DNS-01 and not HTTP-01: this cluster's Managed Anthos Service Mesh runs
+# the TRAFFIC_DIRECTOR implementation, which does not run a Gateway API
+# controller — a manually created GatewayClass sat at "Waiting for
+# controller" indefinitely, confirmed empirically, not a propagation-lag
+# issue. Our Gateway is also the classic networking.istio.io CRD, which
+# doesn't consume core Ingress resources either. DNS-01 needs no routing
+# integration at all — cert-manager just calls Cloudflare's API to create a
+# TXT record — so it's the only ACME challenge type that works with this
+# mesh setup without adding a second, parallel, non-mesh ingress path.
+#
+# Prerequisite this file does NOT and cannot create: a Secret holding a
+# Cloudflare API token, scoped to Zone:DNS:Edit for mevijay.io only (not the
+# Global API Key). Create it before this ClusterIssuer can actually issue
+# anything:
+#
+#   kubectl create secret generic cloudflare-api-token-secret \
+#     --namespace cert-manager \
+#     --from-literal=api-token=YOUR_CLOUDFLARE_TOKEN
+#
+# Until that Secret exists, the ClusterIssuer and Certificate below are safe
+# to apply — they'll just sit retrying/pending, not erroring destructively.
+
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: letsencrypt-prod
+spec:
+  acme:
+    server: https://acme-v02.api.letsencrypt.org/directory
+    email: sharmavijay86@gmail.com
+    privateKeySecretRef:
+      name: letsencrypt-prod-account-key
+    solvers:
+      - dns01:
+          cloudflare:
+            apiTokenSecretRef:
+              name: cloudflare-api-token-secret
+              key: api-token
+        selector:
+          dnsZones:
+            - "mevijay.io"
+
+---
+# Lives in istio-ingress (not default) because the resulting Secret must be
+# in the same namespace as the Gateway that references it via credentialName
+# — cross-namespace secret references need extra ReferenceGrant-style
+# plumbing that classic Istio Gateway doesn't support the way Gateway API
+# does.
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: vertex-chat-tls
+  namespace: istio-ingress
+spec:
+  secretName: vertex-chat-tls
+  issuerRef:
+    name: letsencrypt-prod
+    kind: ClusterIssuer
+  dnsNames:
+    - vertex.mevijay.io
