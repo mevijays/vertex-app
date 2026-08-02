@@ -3,7 +3,7 @@
   "info": {
     "title": "Vertex Chat API",
     "version": "1.0.0",
-    "description": "An OpenAI-compatible Chat Completions API backed by Gemini 3.5 Flash on Vertex AI. The endpoint supports regular JSON responses and OpenAI-style Server-Sent Event streaming. Conversation state is supplied by the caller in the messages array; the server does not persist API conversations."
+    "description": "An OpenAI-compatible Chat Completions API backed by Gemini 3.5 Flash on Vertex AI, plus a companion API for the web UI: token login, per-browser sessions, SQLite-backed conversation history, PDF/text document analysis, and saved prompts. All routes except POST /api/login and GET /healthz require the shared bearer token, either as an Authorization header or the vc_auth cookie set by /api/login."
   },
   "servers": [
     {
@@ -15,14 +15,31 @@
     {
       "name": "Chat",
       "description": "Generate model responses from a conversation"
+    },
+    {
+      "name": "Auth",
+      "description": "Static shared-token login and session discovery"
+    },
+    {
+      "name": "Conversations",
+      "description": "SQLite-backed conversation history, scoped to the caller's session"
+    },
+    {
+      "name": "Documents",
+      "description": "Upload PDF/text documents for Gemini to analyze; the extracted text becomes reusable chat context"
+    },
+    {
+      "name": "Prompts",
+      "description": "Saved prompts, scoped to the caller's session"
     }
   ],
+  "security": [{"bearerAuth": []}, {"cookieAuth": []}],
   "paths": {
     "/v1/chat/completions": {
       "post": {
         "tags": ["Chat"],
         "summary": "Create a chat completion",
-        "description": "Generates a response from the configured Gemini model. Set stream to true to receive text/event-stream chunks. A stream starts with an assistant-role delta, continues with content deltas, ends with a stop finish_reason, and is followed by data: [DONE].",
+        "description": "Generates a response from the configured Gemini model. Set stream to true to receive text/event-stream chunks. A stream starts with an assistant-role delta, continues with content deltas, ends with a stop finish_reason, and is followed by data: [DONE]. When conversation_id is supplied, the server persists the turn and prepends prior history plus any attached-document context server-side — send only the new turn(s) once you have an id, not the full history. Omit conversation_id entirely for the original fully stateless behavior.",
         "operationId": "createChatCompletion",
         "requestBody": {
           "required": true,
@@ -52,6 +69,16 @@
                     ],
                     "stream": true
                   }
+                },
+                "conversation": {
+                  "summary": "Server-persisted conversation, second turn",
+                  "value": {
+                    "messages": [
+                      {"role": "system", "content": "Be concise and precise."},
+                      {"role": "user", "content": "And the follow-up question?"}
+                    ],
+                    "conversation_id": "a self-generated thread id, or one returned by a prior call"
+                  }
                 }
               }
             }
@@ -77,6 +104,7 @@
             "description": "Invalid JSON or unsupported request value.",
             "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ErrorResponse"}}}
           },
+          "401": {"$ref": "#/components/responses/Unauthorized"},
           "429": {
             "description": "The per-instance concurrent generation limit was reached.",
             "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ErrorResponse"}}}
@@ -91,9 +119,355 @@
           }
         }
       }
+    },
+    "/api/login": {
+      "post": {
+        "tags": ["Auth"],
+        "summary": "Log in with the shared access token",
+        "description": "Unauthenticated — this is how a caller obtains authentication in the first place. On success, sets the vc_auth cookie the browser UI relies on; API/SDK callers should instead send Authorization: Bearer <token> and can skip this endpoint entirely.",
+        "operationId": "login",
+        "security": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["token"],
+                "properties": {"token": {"type": "string"}}
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Token accepted; vc_auth cookie set.",
+            "content": {"application/json": {"schema": {"type": "object", "properties": {"ok": {"type": "boolean", "const": true}}}}}
+          },
+          "400": {
+            "description": "Invalid JSON body.",
+            "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ErrorResponse"}}}
+          },
+          "401": {
+            "description": "Token did not match.",
+            "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ErrorResponse"}}}
+          }
+        }
+      }
+    },
+    "/api/session": {
+      "get": {
+        "tags": ["Auth"],
+        "summary": "Discover or create the caller's session",
+        "description": "Returns the anonymous per-browser session id, minting one (and setting the vc_session cookie) on first visit. Useful for headless callers that want an explicit session id; the browser UI gets one implicitly from any /api/* call.",
+        "operationId": "getSession",
+        "responses": {
+          "200": {
+            "description": "Session id.",
+            "content": {"application/json": {"schema": {"type": "object", "properties": {"session_id": {"type": "string"}}}}}
+          },
+          "401": {"$ref": "#/components/responses/Unauthorized"}
+        }
+      }
+    },
+    "/api/config": {
+      "get": {
+        "tags": ["Auth"],
+        "summary": "Get app configuration",
+        "description": "Returns the active model and limits the UI needs; also doubles as the session-bootstrap call (sets vc_session on first visit).",
+        "operationId": "getConfig",
+        "responses": {
+          "200": {
+            "description": "Configuration.",
+            "content": {"application/json": {"schema": {
+              "type": "object",
+              "properties": {
+                "model": {"type": "string", "example": "gemini-3.5-flash"},
+                "max_messages": {"type": "integer"},
+                "mock": {"type": "boolean"}
+              }
+            }}}
+          },
+          "401": {"$ref": "#/components/responses/Unauthorized"}
+        }
+      }
+    },
+    "/api/conversations": {
+      "get": {
+        "tags": ["Conversations"],
+        "summary": "List conversations",
+        "description": "Lists conversations owned by the caller's session, most recently updated first.",
+        "operationId": "listConversations",
+        "responses": {
+          "200": {
+            "description": "Conversation summaries.",
+            "content": {"application/json": {"schema": {
+              "type": "object",
+              "properties": {"conversations": {"type": "array", "items": {"$ref": "#/components/schemas/ConversationSummary"}}}
+            }}}
+          },
+          "401": {"$ref": "#/components/responses/Unauthorized"}
+        }
+      },
+      "post": {
+        "tags": ["Conversations"],
+        "summary": "Create a conversation",
+        "operationId": "createConversation",
+        "requestBody": {
+          "required": false,
+          "content": {"application/json": {"schema": {
+            "type": "object",
+            "properties": {
+              "title": {"type": "string"},
+              "system_instruction": {"type": "string"}
+            }
+          }}}
+        },
+        "responses": {
+          "201": {
+            "description": "Created conversation (empty messages/documents).",
+            "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ConversationDetail"}}}
+          },
+          "401": {"$ref": "#/components/responses/Unauthorized"},
+          "429": {
+            "description": "Per-session conversation limit reached.",
+            "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ErrorResponse"}}}
+          }
+        }
+      }
+    },
+    "/api/conversations/{id}": {
+      "parameters": [
+        {"name": "id", "in": "path", "required": true, "schema": {"type": "string"}}
+      ],
+      "get": {
+        "tags": ["Conversations"],
+        "summary": "Get a conversation",
+        "description": "Returns the full conversation including messages and documents. Scoped to the caller's session — a conversation owned by a different session returns 404, not 403, so existence can't be inferred cross-session.",
+        "operationId": "getConversation",
+        "responses": {
+          "200": {
+            "description": "Full conversation.",
+            "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ConversationDetail"}}}
+          },
+          "401": {"$ref": "#/components/responses/Unauthorized"},
+          "404": {"$ref": "#/components/responses/NotFound"}
+        }
+      },
+      "patch": {
+        "tags": ["Conversations"],
+        "summary": "Rename or update a conversation's system instruction",
+        "operationId": "updateConversation",
+        "requestBody": {
+          "required": true,
+          "content": {"application/json": {"schema": {
+            "type": "object",
+            "properties": {
+              "title": {"type": "string"},
+              "system_instruction": {"type": "string"}
+            }
+          }}}
+        },
+        "responses": {
+          "200": {
+            "description": "Updated.",
+            "content": {"application/json": {"schema": {"type": "object", "properties": {"ok": {"type": "boolean", "const": true}}}}}
+          },
+          "401": {"$ref": "#/components/responses/Unauthorized"},
+          "404": {"$ref": "#/components/responses/NotFound"}
+        }
+      },
+      "delete": {
+        "tags": ["Conversations"],
+        "summary": "Delete a conversation",
+        "description": "Cascades to its messages and documents.",
+        "operationId": "deleteConversation",
+        "responses": {
+          "204": {"description": "Deleted."},
+          "401": {"$ref": "#/components/responses/Unauthorized"},
+          "404": {"$ref": "#/components/responses/NotFound"}
+        }
+      }
+    },
+    "/api/conversations/{id}/documents": {
+      "parameters": [
+        {"name": "id", "in": "path", "required": true, "schema": {"type": "string"}}
+      ],
+      "post": {
+        "tags": ["Documents"],
+        "summary": "Upload and analyze a document",
+        "description": "multipart/form-data with a file field. The server sniffs the actual content (application/pdf only if %PDF- magic bytes are present, else text/plain only if valid UTF-8) rather than trusting the client-supplied type. Analysis runs synchronously via Gemini and the raw file bytes are never stored — only the extracted text.",
+        "operationId": "uploadDocument",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "type": "object",
+                "required": ["file"],
+                "properties": {"file": {"type": "string", "format": "binary"}}
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Document created. status is ready on success or failed with an error message on analysis failure (the resource still exists either way).",
+            "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Document"}}}
+          },
+          "400": {
+            "description": "Missing file field.",
+            "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ErrorResponse"}}}
+          },
+          "401": {"$ref": "#/components/responses/Unauthorized"},
+          "404": {"$ref": "#/components/responses/NotFound"},
+          "413": {
+            "description": "Upload exceeds the configured size limit.",
+            "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ErrorResponse"}}}
+          },
+          "415": {
+            "description": "Content is neither a PDF nor valid UTF-8 text.",
+            "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ErrorResponse"}}}
+          },
+          "429": {
+            "description": "Per-conversation document limit reached, or the service is at its concurrency limit.",
+            "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ErrorResponse"}}}
+          }
+        }
+      }
+    },
+    "/api/conversations/{id}/documents/{docId}": {
+      "parameters": [
+        {"name": "id", "in": "path", "required": true, "schema": {"type": "string"}},
+        {"name": "docId", "in": "path", "required": true, "schema": {"type": "string"}}
+      ],
+      "get": {
+        "tags": ["Documents"],
+        "summary": "Get a document's full extracted text",
+        "operationId": "getDocument",
+        "responses": {
+          "200": {
+            "description": "Document with extracted_text.",
+            "content": {"application/json": {"schema": {"$ref": "#/components/schemas/DocumentDetail"}}}
+          },
+          "401": {"$ref": "#/components/responses/Unauthorized"},
+          "404": {"$ref": "#/components/responses/NotFound"}
+        }
+      },
+      "delete": {
+        "tags": ["Documents"],
+        "summary": "Delete a document",
+        "operationId": "deleteDocument",
+        "responses": {
+          "204": {"description": "Deleted."},
+          "401": {"$ref": "#/components/responses/Unauthorized"},
+          "404": {"$ref": "#/components/responses/NotFound"}
+        }
+      }
+    },
+    "/api/prompts": {
+      "get": {
+        "tags": ["Prompts"],
+        "summary": "List saved prompts",
+        "operationId": "listSavedPrompts",
+        "responses": {
+          "200": {
+            "description": "Saved prompts, most recently updated first.",
+            "content": {"application/json": {"schema": {
+              "type": "object",
+              "properties": {"prompts": {"type": "array", "items": {"$ref": "#/components/schemas/SavedPrompt"}}}
+            }}}
+          },
+          "401": {"$ref": "#/components/responses/Unauthorized"}
+        }
+      },
+      "post": {
+        "tags": ["Prompts"],
+        "summary": "Save a prompt",
+        "description": "If title is omitted or blank, it's derived from the first ~60 characters of content.",
+        "operationId": "createSavedPrompt",
+        "requestBody": {
+          "required": true,
+          "content": {"application/json": {"schema": {"$ref": "#/components/schemas/SavedPromptRequest"}}}
+        },
+        "responses": {
+          "201": {
+            "description": "Created.",
+            "content": {"application/json": {"schema": {"$ref": "#/components/schemas/SavedPrompt"}}}
+          },
+          "400": {
+            "description": "content must not be empty.",
+            "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ErrorResponse"}}}
+          },
+          "401": {"$ref": "#/components/responses/Unauthorized"},
+          "429": {
+            "description": "Per-session saved-prompt limit reached.",
+            "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ErrorResponse"}}}
+          }
+        }
+      }
+    },
+    "/api/prompts/{id}": {
+      "parameters": [
+        {"name": "id", "in": "path", "required": true, "schema": {"type": "string"}}
+      ],
+      "put": {
+        "tags": ["Prompts"],
+        "summary": "Update a saved prompt",
+        "operationId": "updateSavedPrompt",
+        "requestBody": {
+          "required": true,
+          "content": {"application/json": {"schema": {"$ref": "#/components/schemas/SavedPromptRequest"}}}
+        },
+        "responses": {
+          "200": {
+            "description": "Updated.",
+            "content": {"application/json": {"schema": {"type": "object", "properties": {"ok": {"type": "boolean", "const": true}}}}}
+          },
+          "400": {
+            "description": "content must not be empty.",
+            "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ErrorResponse"}}}
+          },
+          "401": {"$ref": "#/components/responses/Unauthorized"},
+          "404": {"$ref": "#/components/responses/NotFound"}
+        }
+      },
+      "delete": {
+        "tags": ["Prompts"],
+        "summary": "Delete a saved prompt",
+        "operationId": "deleteSavedPrompt",
+        "responses": {
+          "204": {"description": "Deleted."},
+          "401": {"$ref": "#/components/responses/Unauthorized"},
+          "404": {"$ref": "#/components/responses/NotFound"}
+        }
+      }
     }
   },
   "components": {
+    "securitySchemes": {
+      "bearerAuth": {
+        "type": "http",
+        "scheme": "bearer",
+        "description": "The shared AUTH_TOKEN. Used by API/SDK callers; the browser UI uses the vc_auth cookie instead."
+      },
+      "cookieAuth": {
+        "type": "apiKey",
+        "in": "cookie",
+        "name": "vc_auth",
+        "description": "Set by POST /api/login. An HMAC of AUTH_TOKEN, not the raw token."
+      }
+    },
+    "responses": {
+      "Unauthorized": {
+        "description": "Missing or invalid credentials.",
+        "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ErrorResponse"}}}
+      },
+      "NotFound": {
+        "description": "Not found, or owned by a different session.",
+        "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ErrorResponse"}}}
+      }
+    },
     "schemas": {
       "ChatCompletionRequest": {
         "type": "object",
@@ -146,6 +520,10 @@
             "enum": [1],
             "default": 1,
             "description": "Only one candidate is supported."
+          },
+          "conversation_id": {
+            "type": "string",
+            "description": "Optional. A caller-generated thread id. If it doesn't yet exist, it's created; if it does, prior history and any attached-document context are prepended server-side. Omit for fully stateless, backward-compatible behavior."
           }
         }
       },
@@ -192,7 +570,11 @@
               }
             }
           },
-          "usage": {"$ref": "#/components/schemas/Usage"}
+          "usage": {"$ref": "#/components/schemas/Usage"},
+          "conversation_id": {
+            "type": "string",
+            "description": "Present only when the request included conversation_id."
+          }
         }
       },
       "ChatCompletionChunk": {
@@ -203,7 +585,8 @@
           "object": {"type": "string", "const": "chat.completion.chunk"},
           "created": {"type": "integer", "format": "int64"},
           "model": {"type": "string"},
-          "choices": {"type": "array", "items": {"type": "object"}}
+          "choices": {"type": "array", "items": {"type": "object"}},
+          "conversation_id": {"type": "string"}
         }
       },
       "Usage": {
@@ -230,8 +613,79 @@
             }
           }
         }
+      },
+      "StoredMessage": {
+        "type": "object",
+        "properties": {
+          "role": {"type": "string", "enum": ["user", "assistant"]},
+          "content": {"type": "string"}
+        }
+      },
+      "ConversationSummary": {
+        "type": "object",
+        "properties": {
+          "id": {"type": "string"},
+          "title": {"type": "string"},
+          "created_at": {"type": "string", "format": "date-time"},
+          "updated_at": {"type": "string", "format": "date-time"},
+          "message_count": {"type": "integer"},
+          "document_count": {"type": "integer"}
+        }
+      },
+      "ConversationDetail": {
+        "type": "object",
+        "properties": {
+          "id": {"type": "string"},
+          "title": {"type": "string"},
+          "system_instruction": {"type": "string"},
+          "created_at": {"type": "string", "format": "date-time"},
+          "updated_at": {"type": "string", "format": "date-time"},
+          "messages": {"type": "array", "items": {"$ref": "#/components/schemas/StoredMessage"}},
+          "documents": {"type": "array", "items": {"$ref": "#/components/schemas/Document"}}
+        }
+      },
+      "Document": {
+        "type": "object",
+        "properties": {
+          "id": {"type": "string"},
+          "filename": {"type": "string"},
+          "mime_type": {"type": "string", "enum": ["application/pdf", "text/plain"]},
+          "size_bytes": {"type": "integer", "format": "int64"},
+          "status": {"type": "string", "enum": ["processing", "ready", "failed"]},
+          "error": {"type": "string", "description": "Present only when status is failed."},
+          "created_at": {"type": "string", "format": "date-time"},
+          "updated_at": {"type": "string", "format": "date-time"}
+        }
+      },
+      "DocumentDetail": {
+        "allOf": [
+          {"$ref": "#/components/schemas/Document"},
+          {
+            "type": "object",
+            "properties": {
+              "extracted_text": {"type": "string", "description": "Gemini's extracted text/summary. Empty until status is ready."}
+            }
+          }
+        ]
+      },
+      "SavedPromptRequest": {
+        "type": "object",
+        "required": ["content"],
+        "properties": {
+          "title": {"type": "string", "description": "Optional; derived from content when omitted."},
+          "content": {"type": "string", "minLength": 1}
+        }
+      },
+      "SavedPrompt": {
+        "type": "object",
+        "properties": {
+          "id": {"type": "string"},
+          "title": {"type": "string"},
+          "content": {"type": "string"},
+          "created_at": {"type": "string", "format": "date-time"},
+          "updated_at": {"type": "string", "format": "date-time"}
+        }
       }
     }
   }
 }
-
