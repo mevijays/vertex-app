@@ -97,6 +97,13 @@ spec:
         app: vertex-chat
     spec:
       serviceAccountName: vertex-chat-ksa
+      # A freshly provisioned GCE PD is mounted owned by root:root, which the
+      # nonroot (UID 65532) container can't write to — SQLite then fails with
+      # "unable to open database file (14)". fsGroup makes the kubelet chown
+      # the PVC (and emptyDir) to this GID on mount so the container's
+      # matching primary group can write to it.
+      securityContext:
+        fsGroup: 65532
       containers:
         - name: vertex-chat
           image: ghcr.io/mevijays/vertex-app:latest
