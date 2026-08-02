@@ -12,9 +12,15 @@ import (
 
 type Generator struct {
 	client *genai.Client
+	model  string
 }
 
-func New(ctx context.Context, projectID, location string) (*Generator, error) {
+var (
+	_ chat.Generator        = (*Generator)(nil)
+	_ chat.DocumentAnalyzer = (*Generator)(nil)
+)
+
+func New(ctx context.Context, projectID, location, modelID string) (*Generator, error) {
 	client, err := genai.NewClient(ctx, &genai.ClientConfig{
 		Project:  projectID,
 		Location: location,
@@ -26,7 +32,7 @@ func New(ctx context.Context, projectID, location string) (*Generator, error) {
 	if err != nil {
 		return nil, fmt.Errorf("create Vertex AI client: %w", err)
 	}
-	return &Generator{client: client}, nil
+	return &Generator{client: client, model: modelID}, nil
 }
 
 func (g *Generator) Stream(ctx context.Context, request chat.Request, onText func(string) error) (chat.Result, error) {
@@ -77,4 +83,31 @@ func (g *Generator) Stream(ctx context.Context, request chat.Request, onText fun
 	}
 
 	return chat.Result{Usage: usage}, nil
+}
+
+// AnalyzeDocument sends inline document bytes (PDF or text) to Gemini and
+// returns an extracted-text/summary suitable for storing as reusable chat
+// context. Uses g.model rather than a per-request model, since document
+// analysis always runs against the app's configured model.
+func (g *Generator) AnalyzeDocument(ctx context.Context, data []byte, mimeType, filename string) (string, error) {
+	prompt := fmt.Sprintf(
+		"Extract and summarize the key information from this document (%s) in detail, "+
+			"preserving facts, figures, and structure so the summary can answer follow-up questions about it.",
+		filename,
+	)
+	parts := []*genai.Part{
+		genai.NewPartFromText(prompt),
+		genai.NewPartFromBytes(data, mimeType),
+	}
+	contents := []*genai.Content{genai.NewContentFromParts(parts, genai.RoleUser)}
+
+	response, err := g.client.Models.GenerateContent(ctx, g.model, contents, &genai.GenerateContentConfig{})
+	if err != nil {
+		return "", fmt.Errorf("analyze document: %w", err)
+	}
+	text := response.Text()
+	if text == "" {
+		return "", fmt.Errorf("analyze document: empty response from model")
+	}
+	return text, nil
 }

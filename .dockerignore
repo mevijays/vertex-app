@@ -7,4 +7,7 @@
 terraform.tfvars
 coverage.out
 README.md
+webui-src/node_modules
+webui-src/dist
+data/
 

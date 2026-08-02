@@ -72,3 +72,21 @@ func (MockGenerator) Stream(ctx context.Context, request Request, onText func(st
 }
 
 var ErrUnsupportedRole = errors.New("unsupported message role")
+
+// DocumentAnalyzer is implemented separately from Generator (rather than
+// folded into it) so MockGenerator stays untouched by document-analysis
+// concerns; vertex.Generator implements both.
+type DocumentAnalyzer interface {
+	AnalyzeDocument(ctx context.Context, data []byte, mimeType, filename string) (string, error)
+}
+
+type MockDocumentAnalyzer struct{}
+
+func (MockDocumentAnalyzer) AnalyzeDocument(ctx context.Context, data []byte, mimeType, filename string) (string, error) {
+	select {
+	case <-ctx.Done():
+		return "", ctx.Err()
+	case <-time.After(12 * time.Millisecond):
+	}
+	return fmt.Sprintf("[MOCK ANALYSIS] %s (%s, %d bytes): local preview extraction — connect Application Default Credentials for a real document analysis.", filename, mimeType, len(data)), nil
+}

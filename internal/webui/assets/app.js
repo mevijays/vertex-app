@@ -36,6 +36,15 @@ const elements = {
   temperature: document.querySelector("#temperature"),
   temperatureValue: document.querySelector("#temperature-value"),
   toast: document.querySelector("#toast"),
+  loginScreen: document.querySelector("#login-screen"),
+  appShell: document.querySelector("#app-shell"),
+  loginForm: document.querySelector("#login-form"),
+  loginToken: document.querySelector("#login-token"),
+  loginError: document.querySelector("#login-error"),
+  attachmentsStrip: document.querySelector("#attachments-strip"),
+  fileInput: document.querySelector("#file-input"),
+  promptsDialog: document.querySelector("#prompts-dialog"),
+  promptsList: document.querySelector("#prompts-list"),
 };
 
 let state = loadState();
@@ -101,6 +110,8 @@ function clearCurrentChat() {
   if (!chat || chat.messages.length === 0) return;
   chat.messages = [];
   chat.title = "New conversation";
+  chat.conversationId = null;
+  chat.documents = [];
   chat.updatedAt = new Date().toISOString();
   saveState();
   render();
@@ -110,6 +121,7 @@ function clearCurrentChat() {
 function render() {
   renderHistory();
   renderMessages();
+  renderAttachments();
   document.documentElement.dataset.theme = state.preferences.theme;
 }
 
@@ -334,22 +346,33 @@ async function sendMessage(text) {
   setGenerating(true);
 
   activeController = new AbortController();
-  const history = chat.messages
-    .filter((message) => !message.streaming)
-    .slice(-MAX_CONTEXT_MESSAGES)
-    .map(({ role, content }) => ({ role, content }));
-  const messages = [{ role: "system", content: state.preferences.system }, ...history];
+
+  // Once a conversation_id exists (minted on first document attach), the
+  // server already holds every prior turn and prepends it server-side —
+  // sending the full local history too would duplicate it. Only the new
+  // turn goes out; the system message is always sent since the server
+  // extracts it separately and never persists or merges it.
+  const userTurns = chat.conversationId
+    ? [{ role: "user", content: text }]
+    : chat.messages
+        .filter((message) => !message.streaming)
+        .slice(-MAX_CONTEXT_MESSAGES)
+        .map(({ role, content }) => ({ role, content }));
+  const messages = [{ role: "system", content: state.preferences.system }, ...userTurns];
+
+  const body = {
+    model: appConfig.model,
+    messages,
+    stream: true,
+    temperature: Number(state.preferences.temperature),
+  };
+  if (chat.conversationId) body.conversation_id = chat.conversationId;
 
   try {
     const response = await fetch("/v1/chat/completions", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        model: appConfig.model,
-        messages,
-        stream: true,
-        temperature: Number(state.preferences.temperature),
-      }),
+      body: JSON.stringify(body),
       signal: activeController.signal,
     });
     if (!response.ok) throw new Error(await readAPIError(response));
@@ -460,11 +483,198 @@ function showToast(message) {
   toastTimer = setTimeout(() => elements.toast.classList.remove("show"), 1800);
 }
 
-async function initialize() {
+// checkAuth doubles as the session bootstrap call: GET /api/config is
+// gated the same as every other /api/* route, so a 401 here means "show
+// the login screen" and a 200 means the vc_session cookie is now set too.
+async function checkAuth() {
   try {
     const response = await fetch("/api/config");
+    if (response.status === 401) return false;
     if (response.ok) appConfig = await response.json();
-  } catch { /* The UI still renders while the server starts. */ }
+    return true;
+  } catch {
+    // The server may still be starting; treat as authenticated so the UI
+    // renders instead of getting stuck behind a login screen it can't
+    // reach anyway.
+    return true;
+  }
+}
+
+async function ensureConversationId(chat) {
+  if (chat.conversationId) return chat.conversationId;
+  const response = await fetch("/api/conversations", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ title: chat.title === "New conversation" ? "" : chat.title }),
+  });
+  if (!response.ok) throw new Error(await readAPIError(response));
+  const data = await response.json();
+  chat.conversationId = data.id;
+  saveState();
+  return chat.conversationId;
+}
+
+async function handleFileSelected(event) {
+  const file = event.target.files?.[0];
+  event.target.value = "";
+  if (!file) return;
+  const chat = activeChat() || createChat();
+
+  let conversationId;
+  try {
+    conversationId = await ensureConversationId(chat);
+  } catch (error) {
+    showToast(`Could not start attachment: ${error.message}`);
+    return;
+  }
+
+  const placeholder = { id: generateId(), filename: file.name, status: "processing" };
+  chat.documents = chat.documents || [];
+  chat.documents.push(placeholder);
+  saveState();
+  renderAttachments();
+
+  const formData = new FormData();
+  formData.append("file", file);
+  try {
+    const response = await fetch(`/api/conversations/${conversationId}/documents`, {
+      method: "POST",
+      body: formData,
+    });
+    const data = await response.json().catch(() => null);
+    if (!response.ok) throw new Error(data?.error?.message || `Upload failed (${response.status})`);
+    Object.assign(placeholder, { id: data.id, status: data.status, error: data.error || "" });
+    showToast(data.status === "ready" ? `${file.name} is ready` : `${file.name} failed: ${data.error || "analysis failed"}`);
+  } catch (error) {
+    placeholder.status = "failed";
+    placeholder.error = error.message;
+    showToast(`Upload failed: ${error.message}`);
+  } finally {
+    saveState();
+    renderAttachments();
+  }
+}
+
+function renderAttachments() {
+  const chat = activeChat();
+  const docs = chat?.documents || [];
+  elements.attachmentsStrip.replaceChildren();
+  for (const doc of docs) {
+    const chip = document.createElement("span");
+    chip.className = `attachment-chip ${doc.status}`;
+
+    const icon = document.createElement("i");
+    icon.className =
+      doc.status === "ready" ? "fa fa-check-circle-o" : doc.status === "failed" ? "fa fa-warning" : "fa fa-spinner fa-spin";
+    chip.append(icon, document.createTextNode(` ${doc.filename}`));
+
+    const remove = document.createElement("button");
+    remove.type = "button";
+    remove.className = "attachment-remove";
+    remove.setAttribute("aria-label", `Remove ${doc.filename}`);
+    remove.innerHTML = '<i class="fa fa-times"></i>';
+    remove.addEventListener("click", () => removeAttachment(chat, doc));
+    chip.append(remove);
+
+    elements.attachmentsStrip.append(chip);
+  }
+}
+
+async function removeAttachment(chat, doc) {
+  chat.documents = (chat.documents || []).filter((d) => d.id !== doc.id);
+  saveState();
+  renderAttachments();
+  if (chat.conversationId && doc.status !== "processing") {
+    try {
+      await fetch(`/api/conversations/${chat.conversationId}/documents/${doc.id}`, { method: "DELETE" });
+    } catch {
+      /* best effort — the local chip is already gone */
+    }
+  }
+}
+
+async function loadPrompts() {
+  try {
+    const response = await fetch("/api/prompts");
+    if (!response.ok) return [];
+    const data = await response.json();
+    return data.prompts || [];
+  } catch {
+    return [];
+  }
+}
+
+async function renderPromptsList() {
+  const prompts = await loadPrompts();
+  elements.promptsList.replaceChildren();
+  if (!prompts.length) {
+    const empty = document.createElement("p");
+    empty.className = "prompts-empty";
+    empty.textContent = "No saved prompts yet.";
+    elements.promptsList.append(empty);
+    return;
+  }
+  for (const prompt of prompts) {
+    const item = document.createElement("div");
+    item.className = "prompt-item";
+
+    const body = document.createElement("button");
+    body.type = "button";
+    body.className = "prompt-item-body";
+    const title = document.createElement("div");
+    title.className = "prompt-item-title";
+    title.textContent = prompt.title;
+    const content = document.createElement("div");
+    content.className = "prompt-item-content";
+    content.textContent = prompt.content;
+    body.append(title, content);
+    body.addEventListener("click", () => {
+      elements.prompt.value = prompt.content;
+      resizePrompt();
+      elements.promptsDialog.close();
+      elements.prompt.focus();
+    });
+
+    const remove = document.createElement("button");
+    remove.type = "button";
+    remove.className = "prompt-item-delete";
+    remove.setAttribute("aria-label", `Delete ${prompt.title}`);
+    remove.innerHTML = '<i class="fa fa-trash-o"></i>';
+    remove.addEventListener("click", async (event) => {
+      event.stopPropagation();
+      await fetch(`/api/prompts/${prompt.id}`, { method: "DELETE" });
+      renderPromptsList();
+    });
+
+    item.append(body, remove);
+    elements.promptsList.append(item);
+  }
+}
+
+async function saveCurrentPromptText(text, title) {
+  const content = text.trim();
+  if (!content) {
+    showToast("Nothing to save yet");
+    return;
+  }
+  await fetch("/api/prompts", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ title: title || "", content }),
+  });
+  showToast("Prompt saved");
+}
+
+async function initialize() {
+  const authed = await checkAuth();
+  if (!authed) {
+    elements.loginScreen.classList.remove("hidden");
+    elements.appShell.classList.add("hidden");
+    elements.loginToken.focus();
+    return;
+  }
+  elements.loginScreen.classList.add("hidden");
+  elements.appShell.classList.remove("hidden");
   elements.model.textContent = appConfig.model;
   document.querySelector(".model-state").textContent = appConfig.mock ? "Preview" : "Live";
   render();
@@ -524,6 +734,53 @@ document.querySelector("#save-settings").addEventListener("click", (event) => {
   saveState();
   elements.dialog.close();
   showToast("Preferences saved");
+});
+
+elements.loginForm.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  elements.loginError.classList.remove("show");
+  const token = elements.loginToken.value;
+  if (!token) return;
+  try {
+    const response = await fetch("/api/login", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ token }),
+    });
+    if (!response.ok) {
+      elements.loginError.textContent = "Invalid token. Please try again.";
+      elements.loginError.classList.add("show");
+      elements.loginToken.select();
+      return;
+    }
+    window.location.reload();
+  } catch {
+    elements.loginError.textContent = "Could not reach the server. Please try again.";
+    elements.loginError.classList.add("show");
+  }
+});
+
+document.querySelector("#attach-button").addEventListener("click", () => elements.fileInput.click());
+elements.fileInput.addEventListener("change", handleFileSelected);
+
+document.querySelector("#prompts-button").addEventListener("click", () => {
+  elements.promptsDialog.showModal();
+  renderPromptsList();
+});
+document.querySelector("#close-prompts").addEventListener("click", () => elements.promptsDialog.close());
+document.querySelector("#save-prompt-form").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const titleInput = document.querySelector("#new-prompt-title");
+  const contentInput = document.querySelector("#new-prompt-content");
+  const content = contentInput.value.trim();
+  if (!content) return;
+  await saveCurrentPromptText(content, titleInput.value.trim());
+  titleInput.value = "";
+  contentInput.value = "";
+  renderPromptsList();
+});
+document.querySelector("#save-prompt-button").addEventListener("click", () => {
+  saveCurrentPromptText(elements.prompt.value, "");
 });
 
 initialize();

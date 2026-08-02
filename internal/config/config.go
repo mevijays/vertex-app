@@ -19,6 +19,16 @@ type Config struct {
 	MaxConcurrentChats int
 	RequestTimeout     time.Duration
 	AllowedOrigins     []string
+
+	AuthToken                   string
+	DBPath                      string
+	CookieSecure                bool
+	MaxUploadBytes              int64
+	MaxDocumentContextChars     int
+	MaxContextMessages          int
+	MaxConversationsPerSession  int
+	MaxDocumentsPerConversation int
+	MaxSavedPromptsPerSession   int
 }
 
 func Load() (Config, error) {
@@ -31,6 +41,15 @@ func Load() (Config, error) {
 		MaxMessages:        100,
 		MaxConcurrentChats: 32,
 		RequestTimeout:     5 * time.Minute,
+
+		AuthToken:                   strings.TrimSpace(os.Getenv("AUTH_TOKEN")),
+		DBPath:                      envOr("DB_PATH", "./data/vertex-chat.db"),
+		MaxUploadBytes:              20 << 20,
+		MaxDocumentContextChars:     24000,
+		MaxContextMessages:          40,
+		MaxConversationsPerSession:  200,
+		MaxDocumentsPerConversation: 20,
+		MaxSavedPromptsPerSession:   100,
 	}
 
 	var err error
@@ -47,6 +66,27 @@ func Load() (Config, error) {
 		return Config{}, err
 	}
 	if cfg.RequestTimeout, err = durationEnv("REQUEST_TIMEOUT", cfg.RequestTimeout); err != nil {
+		return Config{}, err
+	}
+	if cfg.CookieSecure, err = boolEnv("COOKIE_SECURE", true); err != nil {
+		return Config{}, err
+	}
+	if cfg.MaxUploadBytes, err = int64Env("MAX_UPLOAD_BYTES", cfg.MaxUploadBytes); err != nil {
+		return Config{}, err
+	}
+	if cfg.MaxDocumentContextChars, err = intEnv("MAX_DOCUMENT_CONTEXT_CHARS", cfg.MaxDocumentContextChars); err != nil {
+		return Config{}, err
+	}
+	if cfg.MaxContextMessages, err = intEnv("MAX_CONTEXT_MESSAGES", cfg.MaxContextMessages); err != nil {
+		return Config{}, err
+	}
+	if cfg.MaxConversationsPerSession, err = intEnv("MAX_CONVERSATIONS_PER_SESSION", cfg.MaxConversationsPerSession); err != nil {
+		return Config{}, err
+	}
+	if cfg.MaxDocumentsPerConversation, err = intEnv("MAX_DOCUMENTS_PER_CONVERSATION", cfg.MaxDocumentsPerConversation); err != nil {
+		return Config{}, err
+	}
+	if cfg.MaxSavedPromptsPerSession, err = intEnv("MAX_SAVED_PROMPTS_PER_SESSION", cfg.MaxSavedPromptsPerSession); err != nil {
 		return Config{}, err
 	}
 
@@ -78,6 +118,30 @@ func Load() (Config, error) {
 	}
 	if cfg.RequestTimeout <= 0 {
 		return Config{}, fmt.Errorf("REQUEST_TIMEOUT must be greater than zero")
+	}
+	if cfg.AuthToken == "" {
+		return Config{}, fmt.Errorf("AUTH_TOKEN is required")
+	}
+	if cfg.DBPath == "" {
+		return Config{}, fmt.Errorf("DB_PATH must not be empty")
+	}
+	if cfg.MaxUploadBytes < 1024 {
+		return Config{}, fmt.Errorf("MAX_UPLOAD_BYTES must be at least 1024")
+	}
+	if cfg.MaxDocumentContextChars < 1 {
+		return Config{}, fmt.Errorf("MAX_DOCUMENT_CONTEXT_CHARS must be greater than zero")
+	}
+	if cfg.MaxContextMessages < 1 {
+		return Config{}, fmt.Errorf("MAX_CONTEXT_MESSAGES must be greater than zero")
+	}
+	if cfg.MaxConversationsPerSession < 1 {
+		return Config{}, fmt.Errorf("MAX_CONVERSATIONS_PER_SESSION must be greater than zero")
+	}
+	if cfg.MaxDocumentsPerConversation < 1 {
+		return Config{}, fmt.Errorf("MAX_DOCUMENTS_PER_CONVERSATION must be greater than zero")
+	}
+	if cfg.MaxSavedPromptsPerSession < 1 {
+		return Config{}, fmt.Errorf("MAX_SAVED_PROMPTS_PER_SESSION must be greater than zero")
 	}
 
 	return cfg, nil

@@ -1,0 +1,329 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    color-scheme: light;
+    --bg: #f7f9fc;
+    --panel: #ffffff;
+    --sidebar: #0b1a3d;
+    --sidebar-soft: #14285c;
+    --ink: #101828;
+    --muted: #5c6b85;
+    --line: rgba(16, 24, 40, 0.1);
+    --accent: theme("colors.brand.600");
+    --accent-soft: theme("colors.brand.100");
+    --shadow: theme("boxShadow.elevated");
+    --radius: 20px;
+    font-family: theme("fontFamily.sans");
+  }
+
+  [data-theme="dark"] {
+    color-scheme: dark;
+    --bg: #0a1128;
+    --panel: #101a35;
+    --ink: #eef2fb;
+    --muted: #93a0bd;
+    --line: rgba(238, 242, 251, 0.12);
+    --accent: theme("colors.brand.400");
+    --accent-soft: rgba(96, 165, 250, 0.16);
+    --shadow: theme("boxShadow.elevated-dark");
+  }
+
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body { @apply m-0 overflow-hidden; background: var(--bg); color: var(--ink); }
+  button, textarea, input { font: inherit; }
+  button { color: inherit; }
+}
+
+@layer components {
+  /* ---------- Login screen ---------- */
+  .login-screen {
+    @apply fixed inset-0 z-50 grid place-items-center px-4;
+    background: var(--bg);
+  }
+  .login-card {
+    @apply w-full max-w-sm rounded-2xl border p-8 text-center;
+    background: var(--panel);
+    border-color: var(--line);
+    box-shadow: var(--shadow);
+  }
+  .login-mark {
+    @apply mx-auto mb-5 grid h-12 w-12 place-items-center rounded-xl text-xl text-white;
+    background: var(--accent);
+  }
+  .login-card h1 { @apply text-xl font-semibold tracking-tight; color: var(--ink); }
+  .login-card p.login-copy { @apply mt-2 mb-6 text-sm; color: var(--muted); }
+  .login-field {
+    @apply mb-3 w-full rounded-lg border px-3.5 py-2.5 text-sm outline-none transition;
+    background: var(--bg);
+    border-color: var(--line);
+    color: var(--ink);
+  }
+  .login-field:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+  .login-error { @apply mb-3 hidden rounded-lg px-3 py-2 text-left text-xs text-red-700; background: #fef2f2; }
+  .login-error.show { @apply block; }
+
+  /* ---------- Shell layout ---------- */
+  .app-shell { @apply grid; grid-template-columns: 288px 1fr; height: 100dvh; }
+
+  .sidebar {
+    @apply relative z-20 flex min-w-0 flex-col text-white;
+    padding: 22px 16px 16px;
+    background: var(--sidebar);
+  }
+  .brand-row, .brand, .topbar, .topbar-actions, .composer-row, .history-label,
+  .settings-card header, .settings-actions, .prompts-card header {
+    @apply flex items-center;
+  }
+  .brand-row { @apply justify-between px-1.5 pb-5; }
+  .brand { @apply gap-2.5 font-bold tracking-tight text-white no-underline; }
+  .brand-mark {
+    @apply grid h-[30px] w-[30px] place-items-center rounded-[9px_9px_4px_9px] text-sm font-medium text-white;
+    background: var(--accent);
+  }
+
+  .new-chat {
+    @apply grid w-full items-center gap-2.5 rounded-xl border px-3.5 py-3 text-left text-white transition;
+    grid-template-columns: auto 1fr auto;
+    border-color: rgba(255, 255, 255, 0.12);
+    background: var(--sidebar-soft);
+  }
+  .new-chat:hover { @apply -translate-y-px; border-color: rgba(96, 165, 250, 0.55); }
+  kbd { @apply rounded border px-1.5 py-px text-[11px] opacity-50; border-color: currentColor; font-family: theme("fontFamily.mono"); }
+
+  .history-label {
+    @apply justify-between px-2.5 pb-2.5 pt-7 text-[10px] font-medium uppercase tracking-widest text-white/50;
+  }
+  .history-list { @apply min-h-0 flex-1 overflow-y-auto; scrollbar-width: thin; }
+  .history-item {
+    @apply relative my-0.5 grid w-full items-center gap-1.5 rounded-lg py-2.5 pl-3 pr-2 text-left text-white/65 transition;
+    grid-template-columns: 1fr auto;
+  }
+  .history-item:hover, .history-item.active { @apply bg-white/10 text-white; }
+  .history-item.active::before {
+    @apply absolute left-0 h-5 w-[3px] rounded content-[''];
+    background: var(--accent);
+  }
+  .history-title { @apply cursor-pointer overflow-hidden text-ellipsis whitespace-nowrap border-0 bg-transparent p-0 text-left text-[13px] text-inherit; }
+  .history-delete { @apply cursor-pointer border-0 bg-transparent text-white/40 opacity-0 transition; }
+  .history-item:hover .history-delete { @apply opacity-100; }
+
+  .sidebar-footer { @apply border-t pt-2.5; border-color: rgba(255, 255, 255, 0.1); }
+  .sidebar-action { @apply w-full cursor-pointer rounded-lg px-2 py-2.5 text-left text-white/75 transition hover:bg-white/10; }
+  .sidebar-action .fa { @apply mr-2.5 w-4 text-center; }
+  .privacy-note { @apply px-2 pt-1.5 text-[10px] text-white/45; }
+  .status-dot { @apply mr-1.5 inline-block h-1.5 w-1.5 rounded-full; background: theme("colors.emerald.400"); }
+
+  .main-panel { @apply relative grid min-w-0 overflow-hidden; grid-template-rows: 64px 1fr auto; }
+  .topbar {
+    @apply relative justify-center border-b px-6;
+    border-color: var(--line);
+    background: color-mix(in srgb, var(--bg) 88%, transparent);
+    backdrop-filter: blur(14px);
+  }
+  .icon-button.menu-button { @apply absolute left-6 hidden; }
+  .model-pill { @apply flex items-center gap-1.5 text-xs; color: var(--muted); }
+  .model-spark { @apply text-base; color: var(--accent); }
+  .model-state {
+    @apply rounded-full px-2 py-0.5 text-[9px] font-medium uppercase tracking-wide;
+    background: var(--accent-soft);
+    color: var(--accent);
+  }
+  .topbar-actions { @apply absolute right-6 gap-1; }
+  .icon-button { @apply grid h-9 w-9 cursor-pointer place-items-center rounded-lg border-0 bg-transparent text-base transition hover:bg-[var(--line)]; }
+  .mobile-only { @apply hidden text-white; }
+
+  .conversation { @apply overflow-y-auto; scroll-behavior: smooth; }
+  .welcome { @apply mx-auto text-center; width: min(880px, calc(100% - 40px)); padding: clamp(48px, 8vh, 100px) 0 130px; }
+  .welcome-orbit {
+    @apply mx-auto mb-6 grid h-12 w-12 place-items-center rounded-full border text-xl;
+    border-color: var(--line);
+    box-shadow: inset 0 0 0 8px var(--panel);
+    color: var(--accent);
+  }
+  .eyebrow { @apply mb-3 text-[10px] font-medium tracking-[.18em]; color: var(--muted); font-family: theme("fontFamily.mono"); }
+  h1 { @apply m-0 leading-none tracking-tighter; font-size: clamp(40px, 6vw, 68px); }
+  h1 em { @apply not-italic font-normal; color: var(--accent); font-family: Georgia, serif; }
+  .welcome-copy { @apply mx-auto mb-9 mt-6 max-w-xl leading-relaxed; color: var(--muted); }
+  .suggestion-grid { @apply grid grid-cols-3 gap-3 text-left; }
+  .suggestion {
+    @apply min-h-[146px] cursor-pointer rounded-2xl border p-4 transition;
+    border-color: var(--line);
+    background: var(--panel);
+    box-shadow: 0 6px 28px rgba(16, 24, 40, 0.04);
+  }
+  .suggestion:hover { @apply -translate-y-1; border-color: var(--accent); box-shadow: var(--shadow); }
+  .suggestion-icon { @apply mb-6 grid h-7 w-7 place-items-center rounded-lg text-white; }
+  .suggestion-icon.coral { @apply bg-amber-500; }
+  .suggestion-icon.violet { @apply bg-violet-500; }
+  .suggestion-icon.lime { background: var(--accent); }
+  .suggestion strong, .suggestion small { @apply block; }
+  .suggestion strong { @apply mb-1 text-[13px]; }
+  .suggestion small { @apply text-[11px]; color: var(--muted); }
+
+  .messages { @apply mx-auto; width: min(860px, calc(100% - 32px)); padding: 35px 0 190px; }
+  .message { @apply my-5 grid gap-3.5; grid-template-columns: 36px minmax(0, 1fr); animation: reveal .25s ease-out; }
+  @keyframes reveal { from { opacity: 0; transform: translateY(6px); } }
+  .message-avatar { @apply grid h-8 w-8 place-items-center rounded-lg text-[11px] font-medium text-white; background: var(--ink); }
+  .message.user .message-avatar { background: var(--accent); }
+  .message-meta { @apply mb-1.5 mt-px text-[10px] font-medium uppercase tracking-wide; color: var(--muted); }
+  .message-content { @apply relative text-[15px] leading-[1.75]; }
+  .message-content p { @apply mb-3 whitespace-pre-wrap; }
+  .message-content p:last-child { @apply mb-0; }
+  .message-content code { @apply rounded px-1.5 py-0.5 text-[13px]; background: var(--line); font-family: theme("fontFamily.mono"); }
+  .message-content pre { @apply my-3 overflow-x-auto rounded-xl p-4 text-slate-100; background: #0f172a; }
+  .message-content pre code { @apply bg-transparent p-0; }
+  .message-content h1, .message-content h2, .message-content h3,
+  .message-content h4, .message-content h5, .message-content h6 { @apply mb-2 mt-4 font-semibold leading-snug; }
+  .message-content h1:first-child, .message-content h2:first-child, .message-content h3:first-child,
+  .message-content h4:first-child, .message-content h5:first-child, .message-content h6:first-child { @apply mt-0; }
+  .message-content h1 { @apply text-xl; }
+  .message-content h2 { @apply text-lg; }
+  .message-content h3 { @apply text-base; }
+  .message-content h4, .message-content h5, .message-content h6 { @apply text-[15px]; }
+  .message-content ul, .message-content ol { @apply mb-3 pl-6; }
+  .message-content li { @apply my-1; }
+  .message-content li p { @apply m-0 inline whitespace-normal; }
+  .message-content blockquote { @apply mb-3 border-l-2 py-0.5 pl-4; border-color: var(--line); color: var(--muted); }
+  .message-content em { @apply italic; }
+  .message-actions { @apply mt-1.5 flex gap-1.5 opacity-0 transition; }
+  .message:hover .message-actions { @apply opacity-100; }
+  .message-action { @apply cursor-pointer rounded-md border px-2 py-1 text-[10px]; border-color: var(--line); color: var(--muted); }
+
+  .message.user { grid-template-columns: minmax(0, 1fr) 36px; }
+  .message.user .message-avatar { @apply order-2; }
+  .message.user .message-body { @apply order-1 ml-auto flex max-w-[82%] flex-col items-end; }
+  .message.user .message-meta { @apply text-right; }
+  .message.user .message-content { @apply rounded-[16px_16px_4px_16px] px-4 py-2.5 text-left; background: var(--accent-soft); }
+  .message.user .message-actions { @apply self-end; }
+  @media (max-width: 640px) { .message.user .message-body { @apply max-w-[92%]; } }
+  .typing-cursor::after {
+    @apply ml-0.5 inline-block h-4 w-1.5 content-[''];
+    background: var(--accent);
+    animation: blink .8s steps(2) infinite;
+  }
+  @keyframes blink { 50% { opacity: 0; } }
+
+  /* ---------- Attachments ---------- */
+  .attachments-strip { @apply mb-2 flex flex-wrap gap-2 empty:hidden; }
+  .attachment-chip {
+    @apply flex items-center gap-2 rounded-full border px-3 py-1.5 text-xs;
+    border-color: var(--line);
+    background: var(--bg);
+    color: var(--ink);
+  }
+  .attachment-chip .fa { @apply text-[11px]; color: var(--muted); }
+  .attachment-chip.ready .fa-check-circle-o { @apply text-emerald-500; }
+  .attachment-chip.failed .fa-warning { @apply text-red-500; }
+  .attachment-chip .fa-spinner { color: var(--accent); }
+  .attachment-remove { @apply ml-1 cursor-pointer border-0 bg-transparent text-[11px]; color: var(--muted); }
+
+  .composer-wrap {
+    @apply absolute bottom-0 left-0 right-0 z-10;
+    padding: 20px max(20px, calc((100% - 860px) / 2));
+    background: linear-gradient(transparent, var(--bg) 28%);
+  }
+  .composer { @apply rounded-[var(--radius)] border px-3 pb-2.5 pt-3; border-color: var(--line); background: var(--panel); box-shadow: var(--shadow); }
+  .composer:focus-within { border-color: var(--accent); box-shadow: 0 24px 80px rgba(37, 99, 235, .14); }
+  .composer textarea { @apply block max-h-[180px] w-full resize-none border-0 bg-transparent leading-relaxed outline-none; color: var(--ink); }
+  .composer textarea::placeholder { color: var(--muted); }
+  .composer-row { @apply mt-2 justify-between; }
+  .composer-hint { @apply text-[10px]; color: var(--muted); }
+  .composer-tools { @apply flex items-center gap-1; }
+  .composer-tool-button { @apply grid h-8 w-8 cursor-pointer place-items-center rounded-lg border-0 bg-transparent text-sm transition hover:bg-[var(--line)]; color: var(--muted); }
+  .send-button, .stop-button { @apply h-[34px] w-[34px] cursor-pointer rounded-lg border-0 text-base text-white; background: var(--ink); }
+  .send-button { background: var(--accent); }
+  .send-button:disabled { @apply cursor-default opacity-30; }
+  .stop-button { @apply text-[11px]; background: theme("colors.amber.500"); }
+  .disclaimer { @apply mt-1.5 text-center text-[9px]; color: var(--muted); }
+  .hidden { display: none !important; }
+
+  /* ---------- Dialogs (settings + saved prompts) ---------- */
+  .settings-dialog, .prompts-dialog {
+    @apply w-full rounded-3xl border-0 p-0;
+    max-width: min(560px, calc(100% - 28px));
+    background: var(--panel);
+    color: var(--ink);
+    box-shadow: 0 30px 100px rgba(0, 0, 0, .25);
+  }
+  .settings-dialog::backdrop, .prompts-dialog::backdrop { @apply backdrop-blur-sm; background: rgba(10, 17, 40, .55); }
+  .settings-card, .prompts-card { @apply p-6; }
+  .settings-card header, .prompts-card header { @apply mb-6 justify-between; }
+  .settings-card h2, .prompts-card h2 { @apply m-0 text-2xl tracking-tighter; }
+  .setting-field { @apply my-4 block text-[13px] font-semibold; }
+  .setting-field textarea {
+    @apply mt-2 w-full resize-y rounded-xl border p-3 leading-normal;
+    border-color: var(--line);
+    background: var(--bg);
+    color: var(--ink);
+  }
+  .setting-field small { @apply mt-1.5 block font-normal; color: var(--muted); }
+  .range-field span { @apply flex justify-between; }
+  .range-field input { @apply w-full; accent-color: var(--accent); }
+  .settings-actions, .prompts-actions { @apply mt-6 justify-end gap-2; }
+  .primary-button, .secondary-button { @apply cursor-pointer rounded-lg px-4 py-2.5 text-sm font-medium transition; }
+  .primary-button { @apply border-0 text-white; background: var(--accent); }
+  .primary-button:hover { background: theme("colors.brand.700"); }
+  .secondary-button { @apply border bg-transparent; border-color: var(--line); }
+
+  .prompts-list { @apply -mx-1 mb-2 max-h-72 overflow-y-auto; }
+  .prompt-item {
+    @apply mx-1 mb-2 flex items-start justify-between gap-3 rounded-xl border p-3;
+    border-color: var(--line);
+  }
+  .prompt-item-body { @apply min-w-0 flex-1 cursor-pointer text-left; }
+  .prompt-item-title { @apply mb-1 truncate text-sm font-semibold; }
+  .prompt-item-content { @apply line-clamp-2 text-xs; color: var(--muted); }
+  .prompt-item-delete { @apply cursor-pointer border-0 bg-transparent text-sm; color: var(--muted); }
+  .prompts-empty { @apply py-6 text-center text-sm; color: var(--muted); }
+  .save-prompt-form { @apply mt-4 border-t pt-4; border-color: var(--line); }
+  .save-prompt-form input {
+    @apply mb-2 w-full rounded-lg border px-3 py-2 text-sm outline-none;
+    border-color: var(--line);
+    background: var(--bg);
+    color: var(--ink);
+  }
+
+  .toast {
+    @apply fixed bottom-5 right-5 z-50 rounded-lg px-3.5 py-2.5 text-xs text-white opacity-0 transition;
+    background: var(--ink);
+    transform: translateY(8px);
+    pointer-events: none;
+  }
+  .toast.show { @apply opacity-100; transform: none; }
+  .sidebar-scrim { @apply hidden; }
+
+  @media (max-width: 780px) {
+    .app-shell { @apply block; }
+    .sidebar {
+      @apply fixed transition-transform;
+      inset: 0 auto 0 0;
+      width: min(310px, 88vw);
+      transform: translateX(-105%);
+      box-shadow: 24px 0 70px rgba(0, 0, 0, .25);
+      transition-duration: .25s;
+    }
+    .sidebar.open { transform: none; }
+    .sidebar-scrim { @apply fixed inset-0 z-[15]; background: rgba(0, 0, 0, .4); }
+    .sidebar-scrim.open { @apply block; }
+    .mobile-only, .menu-button { @apply grid; }
+    .topbar { @apply px-3; }
+    .icon-button.menu-button { @apply left-3 grid; }
+    .topbar-actions { @apply right-3; }
+    .suggestion-grid { @apply grid-cols-1; }
+    .suggestion { @apply min-h-[112px]; }
+    .suggestion-icon { @apply mb-3.5; }
+    .welcome { @apply pt-11; }
+    .composer-wrap { @apply pl-3 pr-3; }
+    .composer-hint { @apply hidden; }
+    .message { grid-template-columns: 30px minmax(0, 1fr); @apply gap-2.5; }
+    .message-avatar { @apply h-7 w-7; }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after { scroll-behavior: auto !important; animation-duration: .01ms !important; transition-duration: .01ms !important; }
+  }
+}

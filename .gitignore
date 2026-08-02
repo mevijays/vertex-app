@@ -26,3 +26,11 @@ application_default_credentials.json
 .vscode/
 .idea/
 *.swp
+
+# Web UI build tooling — compiled output (styles.css, vendor/fontawesome)
+# is committed under internal/webui/assets/, these are not
+webui-src/node_modules/
+webui-src/dist/
+
+# SQLite data (local dev only — DB_PATH defaults under ./data)
+/data/

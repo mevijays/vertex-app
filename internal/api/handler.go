@@ -17,20 +17,25 @@ import (
 
 	"vertex-chat/internal/chat"
 	"vertex-chat/internal/config"
+	"vertex-chat/internal/store"
 )
 
 var unmarshalJSON = json.Unmarshal
 
 type Handler struct {
 	generator chat.Generator
+	analyzer  chat.DocumentAnalyzer
+	store     *store.Store
 	cfg       config.Config
 	logger    *slog.Logger
 	sem       chan struct{}
 }
 
-func NewHandler(generator chat.Generator, cfg config.Config, logger *slog.Logger) *Handler {
+func NewHandler(generator chat.Generator, analyzer chat.DocumentAnalyzer, st *store.Store, cfg config.Config, logger *slog.Logger) *Handler {
 	return &Handler{
 		generator: generator,
+		analyzer:  analyzer,
+		store:     st,
 		cfg:       cfg,
 		logger:    logger,
 		sem:       make(chan struct{}, cfg.MaxConcurrentChats),
@@ -38,14 +43,31 @@ func NewHandler(generator chat.Generator, cfg config.Config, logger *slog.Logger
 }
 
 func (h *Handler) Register(mux *http.ServeMux) {
-	mux.HandleFunc("POST /v1/chat/completions", h.ChatCompletions)
+	mux.HandleFunc("POST /v1/chat/completions", h.requireAuth(h.withOptionalSession(h.ChatCompletions)))
 	mux.HandleFunc("OPTIONS /v1/chat/completions", h.preflight)
-	mux.HandleFunc("GET /openapi.json", h.openAPI)
-	mux.Handle("GET /docs/", v5emb.New("Vertex Chat API", "/openapi.json", "/docs/"))
+	mux.HandleFunc("GET /openapi.json", h.requireAuth(h.openAPI))
+	mux.Handle("GET /docs/", h.requireAuth(v5emb.New("Vertex Chat API", "/openapi.json", "/docs/").ServeHTTP))
 	mux.HandleFunc("GET /docs", func(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/docs/", http.StatusPermanentRedirect)
 	})
-	mux.HandleFunc("GET /api/config", h.appConfig)
+	mux.HandleFunc("POST /api/login", h.login)
+	mux.HandleFunc("GET /api/config", h.requireAuth(h.withSession(h.appConfig)))
+	mux.HandleFunc("GET /api/session", h.requireAuth(h.withSession(h.sessionInfo)))
+
+	mux.HandleFunc("GET /api/conversations", h.requireAuth(h.withSession(h.listConversations)))
+	mux.HandleFunc("POST /api/conversations", h.requireAuth(h.withSession(h.createConversation)))
+	mux.HandleFunc("GET /api/conversations/{id}", h.requireAuth(h.withSession(h.getConversation)))
+	mux.HandleFunc("PATCH /api/conversations/{id}", h.requireAuth(h.withSession(h.updateConversation)))
+	mux.HandleFunc("DELETE /api/conversations/{id}", h.requireAuth(h.withSession(h.deleteConversation)))
+	mux.HandleFunc("POST /api/conversations/{id}/documents", h.requireAuth(h.withSession(h.uploadDocument)))
+	mux.HandleFunc("GET /api/conversations/{id}/documents/{docId}", h.requireAuth(h.withSession(h.getDocument)))
+	mux.HandleFunc("DELETE /api/conversations/{id}/documents/{docId}", h.requireAuth(h.withSession(h.deleteDocument)))
+
+	mux.HandleFunc("GET /api/prompts", h.requireAuth(h.withSession(h.listSavedPrompts)))
+	mux.HandleFunc("POST /api/prompts", h.requireAuth(h.withSession(h.createSavedPrompt)))
+	mux.HandleFunc("PUT /api/prompts/{id}", h.requireAuth(h.withSession(h.updateSavedPrompt)))
+	mux.HandleFunc("DELETE /api/prompts/{id}", h.requireAuth(h.withSession(h.deleteSavedPrompt)))
+
 	mux.HandleFunc("GET /healthz", h.health)
 }
 
@@ -86,13 +108,67 @@ func (h *Handler) ChatCompletions(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), h.cfg.RequestTimeout)
 	defer cancel()
 
+	// When conversation_id is absent this block never runs: zero behavior
+	// change, nothing touches SQLite, exactly today's stateless contract.
+	var conv *store.Conversation
+	if request.ConversationID != "" {
+		sessionID := sessionIDFromContext(ctx)
+		resolved, err := h.resolveConversation(ctx, sessionID, request.ConversationID)
+		if err != nil {
+			h.writeError(w, http.StatusInternalServerError, "could not resolve conversation", "server_error", nil, "conversation_failed")
+			return
+		}
+		conv = &resolved
+
+		stored, err := h.store.RecentMessages(ctx, conv.ID, h.cfg.MaxContextMessages)
+		if err != nil {
+			h.writeError(w, http.StatusInternalServerError, "could not load conversation history", "server_error", nil, "conversation_failed")
+			return
+		}
+		docCtx, err := h.store.DocumentsContext(ctx, conv.ID, h.cfg.MaxDocumentContextChars)
+		if err != nil {
+			h.writeError(w, http.StatusInternalServerError, "could not load conversation history", "server_error", nil, "conversation_failed")
+			return
+		}
+
+		// Persisted before generation so a failed/timed-out call never loses
+		// what was asked.
+		if err := h.store.AppendMessages(ctx, conv.ID, chatRequest.Messages); err != nil {
+			h.writeError(w, http.StatusInternalServerError, "could not store message", "server_error", nil, "conversation_failed")
+			return
+		}
+		if conv.Title == "" {
+			if first := firstUserMessage(chatRequest.Messages); first != "" {
+				_ = h.store.RenameConversation(ctx, conv.ID, conv.SessionID, deriveTitle(first))
+			}
+		}
+
+		chatRequest.Messages = mergeMessages(stored, chatRequest.Messages, h.cfg.MaxContextMessages)
+		if docCtx != "" {
+			if chatRequest.System != "" {
+				chatRequest.System += "\n\n---\nAttached document context:\n" + docCtx
+			} else {
+				chatRequest.System = "---\nAttached document context:\n" + docCtx
+			}
+		}
+	}
+
 	id := completionID()
 	created := time.Now().Unix()
 	if request.Stream {
-		h.stream(ctx, w, id, created, chatRequest)
+		h.stream(ctx, w, id, created, chatRequest, conv)
 		return
 	}
-	h.complete(ctx, w, id, created, chatRequest)
+	h.complete(ctx, w, id, created, chatRequest, conv)
+}
+
+func firstUserMessage(messages []chat.Message) string {
+	for _, m := range messages {
+		if m.Role == "user" {
+			return m.Content
+		}
+	}
+	return ""
 }
 
 func (h *Handler) validateAndConvert(request ChatCompletionRequest) (chat.Request, *string, error) {
@@ -156,7 +232,7 @@ func (h *Handler) validateAndConvert(request ChatCompletionRequest) (chat.Reques
 	}, nil, nil
 }
 
-func (h *Handler) complete(ctx context.Context, w http.ResponseWriter, id string, created int64, request chat.Request) {
+func (h *Handler) complete(ctx context.Context, w http.ResponseWriter, id string, created int64, request chat.Request, conv *store.Conversation) {
 	var text strings.Builder
 	result, err := h.generator.Stream(ctx, request, func(chunk string) error {
 		_, writeErr := text.WriteString(chunk)
@@ -168,8 +244,10 @@ func (h *Handler) complete(ctx context.Context, w http.ResponseWriter, id string
 		return
 	}
 
+	h.storeAssistantReply(ctx, conv, text.String())
+
 	finish := "stop"
-	h.writeJSON(w, http.StatusOK, chatCompletionResponse{
+	response := chatCompletionResponse{
 		ID:      id,
 		Object:  "chat.completion",
 		Created: created,
@@ -180,14 +258,23 @@ func (h *Handler) complete(ctx context.Context, w http.ResponseWriter, id string
 			FinishReason: &finish,
 		}},
 		Usage: &result.Usage,
-	})
+	}
+	if conv != nil {
+		response.ConversationID = conv.ID
+	}
+	h.writeJSON(w, http.StatusOK, response)
 }
 
-func (h *Handler) stream(ctx context.Context, w http.ResponseWriter, id string, created int64, request chat.Request) {
+func (h *Handler) stream(ctx context.Context, w http.ResponseWriter, id string, created int64, request chat.Request, conv *store.Conversation) {
 	flusher, ok := w.(http.Flusher)
 	if !ok {
 		h.writeError(w, http.StatusInternalServerError, "streaming is not supported by this server", "server_error", nil, "streaming_unavailable")
 		return
+	}
+
+	convID := ""
+	if conv != nil {
+		convID = conv.ID
 	}
 
 	w.Header().Set("Content-Type", "text/event-stream; charset=utf-8")
@@ -196,13 +283,15 @@ func (h *Handler) stream(ctx context.Context, w http.ResponseWriter, id string, 
 	w.Header().Set("X-Accel-Buffering", "no")
 	w.WriteHeader(http.StatusOK)
 
-	if err := writeSSE(w, streamChunk(id, created, request.Model, streamDelta{Role: "assistant"}, nil)); err != nil {
+	if err := writeSSE(w, streamChunk(id, created, request.Model, convID, streamDelta{Role: "assistant"}, nil)); err != nil {
 		return
 	}
 	flusher.Flush()
 
+	var full strings.Builder
 	_, err := h.generator.Stream(ctx, request, func(text string) error {
-		if err := writeSSE(w, streamChunk(id, created, request.Model, streamDelta{Content: text}, nil)); err != nil {
+		full.WriteString(text)
+		if err := writeSSE(w, streamChunk(id, created, request.Model, convID, streamDelta{Content: text}, nil)); err != nil {
 			return err
 		}
 		flusher.Flush()
@@ -220,19 +309,40 @@ func (h *Handler) stream(ctx context.Context, w http.ResponseWriter, id string, 
 		return
 	}
 
+	h.storeAssistantReply(ctx, conv, full.String())
+
 	finish := "stop"
-	_ = writeSSE(w, streamChunk(id, created, request.Model, streamDelta{}, &finish))
+	_ = writeSSE(w, streamChunk(id, created, request.Model, convID, streamDelta{}, &finish))
 	_, _ = io.WriteString(w, "data: [DONE]\n\n")
 	flusher.Flush()
 }
 
-func streamChunk(id string, created int64, model string, delta streamDelta, finish *string) chatCompletionResponse {
+// storeAssistantReply persists the model's reply and bumps the
+// conversation's updated_at. A storage failure here is logged, not
+// surfaced to the client — generation already succeeded and was already
+// delivered, so failing the response now would be worse than a silently
+// incomplete history.
+func (h *Handler) storeAssistantReply(ctx context.Context, conv *store.Conversation, text string) {
+	if conv == nil {
+		return
+	}
+	if err := h.store.AppendMessages(ctx, conv.ID, []chat.Message{{Role: "assistant", Content: text}}); err != nil {
+		h.logger.Error("store assistant message", "conversation_id", conv.ID, "error", err)
+		return
+	}
+	if err := h.store.TouchConversation(ctx, conv.ID); err != nil {
+		h.logger.Error("touch conversation", "conversation_id", conv.ID, "error", err)
+	}
+}
+
+func streamChunk(id string, created int64, model, conversationID string, delta streamDelta, finish *string) chatCompletionResponse {
 	return chatCompletionResponse{
-		ID:      id,
-		Object:  "chat.completion.chunk",
-		Created: created,
-		Model:   model,
-		Choices: []completionChoice{{Index: 0, Delta: &delta, FinishReason: finish}},
+		ID:             id,
+		Object:         "chat.completion.chunk",
+		Created:        created,
+		Model:          model,
+		ConversationID: conversationID,
+		Choices:        []completionChoice{{Index: 0, Delta: &delta, FinishReason: finish}},
 	}
 }
 

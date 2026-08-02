@@ -3,14 +3,15 @@ package api
 import "vertex-chat/internal/chat"
 
 type ChatCompletionRequest struct {
-	Model       string         `json:"model"`
-	Messages    []chat.Message `json:"messages"`
-	Stream      bool           `json:"stream,omitempty"`
-	Temperature *float32       `json:"temperature,omitempty"`
-	TopP        *float32       `json:"top_p,omitempty"`
-	MaxTokens   int32          `json:"max_tokens,omitempty"`
-	Stop        StringList     `json:"stop,omitempty"`
-	N           int            `json:"n,omitempty"`
+	Model          string         `json:"model"`
+	Messages       []chat.Message `json:"messages"`
+	Stream         bool           `json:"stream,omitempty"`
+	Temperature    *float32       `json:"temperature,omitempty"`
+	TopP           *float32       `json:"top_p,omitempty"`
+	MaxTokens      int32          `json:"max_tokens,omitempty"`
+	Stop           StringList     `json:"stop,omitempty"`
+	N              int            `json:"n,omitempty"`
+	ConversationID string         `json:"conversation_id,omitempty"`
 }
 
 type StringList []string
@@ -33,12 +34,13 @@ func (s *StringList) UnmarshalJSON(data []byte) error {
 }
 
 type chatCompletionResponse struct {
-	ID      string             `json:"id"`
-	Object  string             `json:"object"`
-	Created int64              `json:"created"`
-	Model   string             `json:"model"`
-	Choices []completionChoice `json:"choices"`
-	Usage   *chat.Usage        `json:"usage,omitempty"`
+	ID             string             `json:"id"`
+	Object         string             `json:"object"`
+	Created        int64              `json:"created"`
+	Model          string             `json:"model"`
+	Choices        []completionChoice `json:"choices"`
+	Usage          *chat.Usage        `json:"usage,omitempty"`
+	ConversationID string             `json:"conversation_id,omitempty"`
 }
 
 type completionChoice struct {

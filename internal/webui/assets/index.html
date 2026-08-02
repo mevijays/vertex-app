@@ -3,24 +3,38 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <meta name="theme-color" content="#10130f">
+    <meta name="theme-color" content="#0b1a3d">
     <meta name="description" content="A fast, private chat interface powered by Gemini on Vertex AI.">
     <title>Vertex Chat</title>
+    <link rel="stylesheet" href="/vendor/fontawesome/css/font-awesome.min.css">
     <link rel="stylesheet" href="/styles.css">
   </head>
   <body>
-    <div class="app-shell">
+    <div class="login-screen" id="login-screen">
+      <div class="login-card">
+        <div class="login-mark" aria-hidden="true"><i class="fa fa-magic"></i></div>
+        <h1>Vertex Chat</h1>
+        <p class="login-copy">Enter the access token to continue.</p>
+        <form id="login-form">
+          <div class="login-error" id="login-error"></div>
+          <input class="login-field" id="login-token" type="password" placeholder="Access token" autocomplete="current-password" autofocus>
+          <button class="primary-button" id="login-submit" type="submit" style="width:100%">Log in</button>
+        </form>
+      </div>
+    </div>
+
+    <div class="app-shell hidden" id="app-shell">
       <aside class="sidebar" id="sidebar" aria-label="Conversation history">
         <div class="brand-row">
           <a class="brand" href="/" aria-label="Vertex Chat home">
             <span class="brand-mark" aria-hidden="true">V</span>
             <span>Vertex Chat</span>
           </a>
-          <button class="icon-button mobile-only" id="close-sidebar" aria-label="Close history">×</button>
+          <button class="icon-button mobile-only" id="close-sidebar" aria-label="Close history"><i class="fa fa-times"></i></button>
         </div>
 
         <button class="new-chat" id="new-chat">
-          <span aria-hidden="true">＋</span>
+          <i class="fa fa-plus" aria-hidden="true"></i>
           New conversation
           <kbd>⌘ K</kbd>
         </button>
@@ -32,8 +46,12 @@
         <nav class="history-list" id="history-list" aria-label="Saved conversations"></nav>
 
         <div class="sidebar-footer">
+          <button class="sidebar-action" id="prompts-button" aria-haspopup="dialog">
+            <i class="fa fa-bookmark" aria-hidden="true"></i>
+            Saved prompts
+          </button>
           <button class="sidebar-action" id="settings-button" aria-haspopup="dialog">
-            <span aria-hidden="true">⚙</span>
+            <i class="fa fa-cog" aria-hidden="true"></i>
             Preferences
           </button>
           <div class="privacy-note">
@@ -47,39 +65,39 @@
 
       <main class="main-panel">
         <header class="topbar">
-          <button class="icon-button menu-button" id="open-sidebar" aria-label="Open conversation history">☰</button>
+          <button class="icon-button menu-button" id="open-sidebar" aria-label="Open conversation history"><i class="fa fa-bars"></i></button>
           <div class="model-pill" title="Active Vertex AI model">
-            <span class="model-spark" aria-hidden="true">✦</span>
+            <span class="model-spark" aria-hidden="true"><i class="fa fa-magic"></i></span>
             <span id="model-name">Gemini 3.5 Flash</span>
             <span class="model-state">Live</span>
           </div>
           <div class="topbar-actions">
-            <button class="icon-button" id="theme-button" aria-label="Toggle color theme">◐</button>
-            <button class="icon-button" id="clear-chat" aria-label="Clear current conversation">⌫</button>
+            <button class="icon-button" id="theme-button" aria-label="Toggle color theme"><i class="fa fa-adjust"></i></button>
+            <button class="icon-button" id="clear-chat" aria-label="Clear current conversation"><i class="fa fa-trash-o"></i></button>
           </div>
         </header>
 
         <section class="conversation" id="conversation" aria-live="polite">
           <div class="welcome" id="welcome">
             <div class="welcome-orbit" aria-hidden="true">
-              <span>✦</span>
+              <i class="fa fa-magic"></i>
             </div>
             <p class="eyebrow">VERTEX AI · GEMINI</p>
             <h1>What are we<br><em>exploring today?</em></h1>
-            <p class="welcome-copy">Think through an idea, understand a complex topic, or turn a rough thought into something useful.</p>
+            <p class="welcome-copy">Think through an idea, understand a complex topic, or turn a rough thought into something useful. Attach a PDF or text file for the model to read.</p>
             <div class="suggestion-grid">
               <button class="suggestion" data-prompt="Help me turn a rough product idea into a focused one-page brief.">
-                <span class="suggestion-icon coral">↗</span>
+                <span class="suggestion-icon coral"><i class="fa fa-lightbulb-o"></i></span>
                 <strong>Shape an idea</strong>
                 <small>From rough thought to clear brief</small>
               </button>
               <button class="suggestion" data-prompt="Explain a difficult technical concept to me with a concrete analogy and example.">
-                <span class="suggestion-icon violet">◎</span>
+                <span class="suggestion-icon violet"><i class="fa fa-graduation-cap"></i></span>
                 <strong>Learn deeply</strong>
                 <small>Make a hard concept click</small>
               </button>
               <button class="suggestion" data-prompt="Review this plan with me. First ask what outcome I want, then identify risks and next steps.">
-                <span class="suggestion-icon lime">✓</span>
+                <span class="suggestion-icon lime"><i class="fa fa-check-circle-o"></i></span>
                 <strong>Stress-test a plan</strong>
                 <small>Find gaps before they matter</small>
               </button>
@@ -89,12 +107,18 @@
         </section>
 
         <div class="composer-wrap">
+          <div class="attachments-strip" id="attachments-strip"></div>
           <form class="composer" id="composer">
             <textarea id="prompt" rows="1" maxlength="120000" placeholder="Message Vertex Chat…" aria-label="Message"></textarea>
             <div class="composer-row">
               <span class="composer-hint"><kbd>Enter</kbd> send · <kbd>Shift Enter</kbd> new line</span>
-              <button class="send-button" id="send-button" type="submit" aria-label="Send message">↑</button>
-              <button class="stop-button hidden" id="stop-button" type="button" aria-label="Stop generating">■</button>
+              <div class="composer-tools">
+                <input type="file" id="file-input" accept=".pdf,.txt,text/plain,application/pdf" class="hidden">
+                <button class="composer-tool-button" id="attach-button" type="button" aria-label="Attach a document"><i class="fa fa-paperclip"></i></button>
+                <button class="composer-tool-button" id="save-prompt-button" type="button" aria-label="Save current message as a prompt"><i class="fa fa-bookmark-o"></i></button>
+                <button class="send-button" id="send-button" type="submit" aria-label="Send message"><i class="fa fa-paper-plane"></i></button>
+                <button class="stop-button hidden" id="stop-button" type="button" aria-label="Stop generating"><i class="fa fa-stop"></i></button>
+              </div>
             </div>
           </form>
           <p class="disclaimer">Gemini can make mistakes. Check important information.</p>
@@ -109,7 +133,7 @@
             <p class="eyebrow">CONVERSATION</p>
             <h2>Preferences</h2>
           </div>
-          <button class="icon-button" value="cancel" aria-label="Close preferences">×</button>
+          <button class="icon-button" value="cancel" aria-label="Close preferences"><i class="fa fa-times"></i></button>
         </header>
         <label class="setting-field">
           <span>System instruction</span>
@@ -128,8 +152,27 @@
       </form>
     </dialog>
 
+    <dialog class="prompts-dialog" id="prompts-dialog">
+      <div class="prompts-card">
+        <header>
+          <div>
+            <p class="eyebrow">LIBRARY</p>
+            <h2>Saved prompts</h2>
+          </div>
+          <button class="icon-button" id="close-prompts" aria-label="Close saved prompts"><i class="fa fa-times"></i></button>
+        </header>
+        <div class="prompts-list" id="prompts-list"></div>
+        <form class="save-prompt-form" id="save-prompt-form">
+          <input id="new-prompt-title" type="text" maxlength="200" placeholder="Title (optional)">
+          <textarea id="new-prompt-content" rows="3" maxlength="6000" placeholder="Prompt text…" style="width:100%; margin-bottom:8px; padding:8px 12px; border-radius:10px; border:1px solid var(--line); background:var(--bg); color:var(--ink);"></textarea>
+          <div class="prompts-actions">
+            <button class="primary-button" type="submit">Save prompt</button>
+          </div>
+        </form>
+      </div>
+    </dialog>
+
     <div class="toast" id="toast" role="status"></div>
     <script src="/app.js" defer></script>
   </body>
 </html>
-

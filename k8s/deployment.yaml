@@ -27,6 +27,23 @@
 # gateway must speak plain HTTP to them, not mesh mTLS — Istio's automatic
 # mTLS detection can be flaky right after a fresh apply, so this is spelled
 # out rather than left to be inferred.
+#
+# AUTH_TOKEN (the static shared login token gating both the UI and the
+# OpenAI-compatible API) is deliberately NOT a plain `value:` here — this is
+# a public repo. It must exist as a Secret before the first deploy:
+#   kubectl create secret generic vertex-chat-auth --namespace default \
+#     --from-literal=token="$(openssl rand -base64 32)"
+# Rotate it later with the same command (add --dry-run=client -o yaml | kubectl
+# apply -f - to update in place) followed by a rollout restart — the app
+# validates cookies via an HMAC derived from this token, so rotating it
+# invalidates every existing login instantly.
+#
+# replicas: 1 is required, not just cost-motivated: conversations/documents/
+# saved prompts are stored in SQLite on the PersistentVolumeClaim below, and
+# a ReadWriteOnce PVC can only attach to one node's pod at a time — two
+# concurrent replicas would either fail to schedule or corrupt the single
+# writer's WAL. If this ever needs to scale beyond one replica, SQLite has to
+# be replaced with a real network database first.
 
 apiVersion: v1
 kind: ServiceAccount
@@ -37,6 +54,21 @@ metadata:
     iam.gke.io/gcp-service-account: vertex-gemini-client@vertex-lab-201086.iam.gserviceaccount.com
 
 ---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: vertex-chat-data
+  namespace: default
+spec:
+  accessModes: ["ReadWriteOnce"]
+  # confirm with `kubectl get storageclass` before first apply if this
+  # cluster's default differs
+  storageClassName: standard-rwo
+  resources:
+    requests:
+      storage: 10Gi
+
+---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -45,12 +77,12 @@ metadata:
   labels:
     app: vertex-chat
 spec:
-  replicas: 2
-  # maxSurge: 0 is deliberate. The default (25%) starts a new pod *before*
-  # retiring an old one, which needs spare CPU the cluster doesn't have — the
-  # rollout then deadlocks: old pods hold the CPU new pods are waiting for, and
-  # the Deployment won't retire them until the new ones are Available. Surging
-  # to zero trades a brief dip to 1 replica for a rollout that always converges.
+  replicas: 1
+  # maxSurge: 0 is now doubly required: a ReadWriteOnce PVC can only attach
+  # to one node's pod at a time, so surging a second pod before the first
+  # exits would risk FailedAttachVolume, on top of the original CPU
+  # constraint below. maxUnavailable: 1 means a rollout briefly has zero
+  # replicas — acceptable for this app's traffic level.
   strategy:
     type: RollingUpdate
     rollingUpdate:
@@ -83,6 +115,15 @@ spec:
               value: "gemini-3.5-flash"
             - name: REQUEST_TIMEOUT
               value: "300s"
+            - name: AUTH_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: vertex-chat-auth
+                  key: token
+            - name: DB_PATH
+              value: "/data/vertex-chat.db"
+            - name: TMPDIR
+              value: "/tmp"
           # Kept small deliberately: a 3-node e2-medium cluster has only ~940m
           # allocatable CPU per node, and GKE system pods + Managed Service Mesh
           # (istio-cni, gke-metadata-server, GMP, kube-dns) already reserve most
@@ -122,6 +163,21 @@ spec:
             readOnlyRootFilesystem: true
             capabilities:
               drop: ["ALL"]
+          # readOnlyRootFilesystem stays on — the PVC mount and the emptyDir
+          # below are the only two paths the app ever writes to (the SQLite
+          # file/WAL and, defensively, anything that wants a writable TMPDIR).
+          volumeMounts:
+            - name: data
+              mountPath: /data
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: vertex-chat-data
+        - name: tmp
+          emptyDir:
+            sizeLimit: 64Mi
       # Uncomment when pulling from a private registry (e.g. artifactory.mylab.lan)
       # that isn't Google Artifact Registry:
       # imagePullSecrets:
