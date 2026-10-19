@@ -6,7 +6,7 @@
     "build": "node build.js"
   },
   "devDependencies": {
-    "tailwindcss": "^3.4.0",
+    "tailwindcss": "^4.3.3",
     "font-awesome": "4.7.0"
   }
 }
